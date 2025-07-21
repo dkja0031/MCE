@@ -1,21 +1,12 @@
 ---
-title: "MCE_accuracy_feb2025"
-author: "DK"
-date: "2025-02-14"
+title: "MCE_accuracy"
+author: "Daniel Kjaergaard"
+date: "21.07.2025"
 output: html_document
 ---
 
 
-```{r setup, include=FALSE}
-knitr::opts_chunk$set(
-	echo = TRUE,
-	message = FALSE,
-	warning = FALSE
-)
-```
-
 ## Read packages
-
 ```{r}
 library(foreign)
 library(forcats)
@@ -24,23 +15,28 @@ library(ggsignif)
 library(arsenal)
 library(pROC)
 library(randomForest)
+library(gt)
+library(gtsummary)
+library(tidyverse)
+library(cowplot)
+library(psych)
+library(mice)
+library(dplyr)
+library(caret)
+library(tidyr)
+library(stringr)
+library(car)
+library(sensemakr)
 ```
 
 
-## Read SPSS file
-
+## Read  file
 ```{r}
-#MCE <- read.spss("L:/LovbeskyttetMapper/BlooDiv/MCE study/R_MCE_Study/Data/Pooled data7_clean_up_02.08.2024.sav", use.value.labels=TRUE, to.data.frame=TRUE)
-
-MCE <- read.csv("L:/LovbeskyttetMapper/BlooDiv/MCE study/R_MCE_Study/Data/Pooled data9_clean_up_15.01.2025.csv", sep = ";", dec = ",")
-
-options(scipen = 999, digits = 4)
+MCE <- read.csv("filename.csv", sep = ";", dec = ",")
+options(scipen = 999, digits = 3)
 ```
 
 ## Clean up dataframe
-
-Origin, diagnosis and country as factor. Years of school > 17.5 changed to 17 as ceiling is set to 17.
-
 ```{r}
 MCE$Country_of_origin <- as.character(MCE$Country_of_origin)
 MCE$Country_of_origin <- as.factor(MCE$Country_of_origin)
@@ -53,6 +49,21 @@ MCE$World_region <- MCE$Country_of_origin
   MCE$World_region <- relevel(MCE$World_region, ref = "Europe")   
 
 MCE$Diagnosis <- as.factor(MCE$Diagnosis)
+MCE$Dementia_type <- (MCE$Diagnosis)
+  MCE$Dementia_type <- fct_collapse(MCE$Dementia_type, AD = c("AD"))
+  MCE$Dementia_type <- fct_collapse(MCE$Dementia_type, CVD = c("VaD"))
+  MCE$Dementia_type <- fct_collapse(MCE$Dementia_type, Mixed = c("Mix AD_VaD", "Mixed_AD_VaD"))
+  MCE$Dementia_type <- fct_collapse(MCE$Dementia_type, FTD = c("bvFTD", "FTD"))
+  MCE$Dementia_type <- fct_collapse(MCE$Dementia_type, DLB_PDD = c("DLB/PDD", "PDD", "DLB", "PD"))
+  MCE$Dementia_type <- fct_collapse(MCE$Dementia_type, Other =
+                                      c("Gerstmann-Sträussler-Scheinker disease", "TBI",
+                                        "NPH", "PSP", "Stroke", "Other specified dementia"))
+  MCE$Dementia_type <- fct_collapse(MCE$Dementia_type, Unspecified = c("Unspecified dementia",
+                                                                       "Unspecified"))
+    excluded_diagnoses <- c( " ","Affective", "Depression", "Psychosis")
+    MCE$Dementia_type <- as.factor(ifelse(MCE$Dementia_type %in% excluded_diagnoses, NA,
+                                          as.character(MCE$Dementia_type)))
+
 MCE$Country <- as.factor(MCE$Country)
   levels(MCE$Country) <- c("Brazil", "Belgium", "Denmark", "Germany", "Norway", 
                            "Sweden_CNTB", "Holland", "Italy", "Spain", "Sweden", 
@@ -72,32 +83,28 @@ MCE$Years_of_school <- as.integer(MCE$Years_of_school)
   MCE["Years_of_school"][MCE["Years_of_school"] > 17.5] <- 17
 MCE$RUDAS <- as.integer(MCE$RUDAS)
 MCE$RPT_learning <- as.integer(MCE$RPT_learning)
-MCE$CRT <- as.integer(MCE$CRT)
+MCE$CRT <- as.integer(MCE$CRT) 
 ```
 
 ## Pre-processing data
-
-Collapse SCD and controls. Exclude "other", "NA" and "unknown" from cognitive status.
-
+#Collapse SCD and controls. Exclude "other", "NA" and "unknown" from cognitive status.
 ```{r}
 MCE$Cogn_status <- fct_collapse(MCE$Cogn_status, Cognitively_intact = c("SCD", "Non-demented control"))
 MCE <- subset(MCE, Cogn_status!="NA's")
-MCE$Cogn_status <- droplevels(MCE$Cogn_status)
+MCE$Cogn_status <- droplevels(MCE$Cogn_status) 
 ```
 
-Create "Site" from Country (Europe vs. Brazil)
+Create "Site" from inclusion site
 ```{r}
 MCE$Site <- MCE$Country
 MCE$Site <- fct_collapse(MCE$Site, Europe = c("Denmark", "Belgium", "Germany", "Norway", "Sweden_CNTB", "Holland", "Italy", "Spain", "Sweden", "UK", "Denmark_TIMING", "Grenada_TIMING", "Holland_TIMING", "UK_TIMING", "Madrid_TIMING", "Paris_TIMING"))
 MCE$Site <- droplevels(MCE$Site)
 ```
 
-
 ## Calculate total MCE and check that it matches
 ```{r}
 MCE$mce_normal <- rowSums(MCE[, 12:17], na.rm = FALSE)
 ```
-
 
 ## Histograms
 ```{r}
@@ -115,65 +122,200 @@ hist(MCE$Fluence_food)
 ```
 
 
-## 
+## TABLE 2 - descriptive statistics
 ```{r}
-par(mfrow = c(1,1))
-ggplot(MCE, aes(X = Age, fill = Minority_majority)) + 
-  geom_histogram(aes(x= Age), position = "identity", alpha = 0.5) +
-  labs (title="Age by ethnicity", x = "Age", y = "") + 
-  scale_fill_manual(values = c("#87CEFA", "#FFA07A")) + 
-  theme_minimal()
+Table_2 <-
+  tbl_summary(
+    MCE, 
+    include = c(Age, Gender, Years_of_school, Minority_majority, Dementia_type, mce_normal, RUDAS, RPT_learning, RPT_recall, RPT_recognition_total, CRT, Fluence_supermarket), 
+    by = Cogn_status, 
+    label = list(
+      Age ~ "Age, years",
+      Gender ~ "Female sex (%)",
+      Years_of_school ~ "Education, years",
+      Minority_majority ~ "Immigrant status (%)",
+      Dementia_type ~ "Diagnosis", 
+      RUDAS ~ "RUDAS score",
+      mce_normal ~ "MCE score"), 
+    statistic = list(
+      Age ~ "{mean} ({sd})",
+      Years_of_school ~ "{median} [{p25}, {p75}]",
+      mce_normal ~ "{median} [{p25}, {p75}]",
+      RUDAS ~ "{median} [{p25}, {p75}]",
+      RPT_learning ~ "{median} [{p25}, {p75}]",
+      RPT_recall ~ "{median} [{p25}, {p75}]",
+      RPT_recognition_total ~ "{median} [{p25}, {p75}]",
+      CRT ~ "{median} [{p25}, {p75}]",
+      Fluence_supermarket ~ "{median} [{p25}, {p75}]",
+      all_categorical() ~ "{n} ({p}%)"), 
+    digits = list(
+      all_continuous() ~ 1,
+      all_categorical() ~ c(0, 1)
+    ),
+    missing = "no" 
+  ) |> 
+  add_p() |> 
+  modify_header(label = "") |>
+  bold_labels()
 
-ggplot(MCE, aes(x = Years_of_school, fill = Minority_majority)) + 
-  geom_histogram(aes(y= ..density..), position = "dodge",  alpha = 0.9, binwidth = 2) +
-  geom_density(aes(y = ..density.., color= Minority_majority), size =1, alpha = 0.3) +
-  labs (title="Years of school by ethnicity") + 
-  theme_minimal()
+Table_2
 
-plot(MCE$Cogn_status,
-     col = "#87CEFA")
+table(MCE$World_region)
+
+
+
+
+
+#Pairwise comparisons
+#Normally distributed
+pairwise.t.test(MCE$Age, MCE$Cogn_status, 
+                     p.adjust.method = "BH")
+#Non-normally distributed
+pairwise.wilcox.test(MCE$Age, MCE$Cogn_status, 
+                     p.adjust.method = "BH")
+pairwise.wilcox.test(MCE$Years_of_school, MCE$Cogn_status, 
+                     p.adjust.method = "BH")
+pairwise.wilcox.test(MCE$mce_normal, MCE$Cogn_status, 
+                     p.adjust.method = "BH")
+pairwise.wilcox.test(MCE$RPT_learning, MCE$Cogn_status, 
+                     p.adjust.method = "BH")
+pairwise.wilcox.test(MCE$RPT_recall, MCE$Cogn_status, 
+                     p.adjust.method = "BH")
+pairwise.wilcox.test(MCE$RPT_recognition_total, MCE$Cogn_status, 
+                     p.adjust.method = "BH")
+pairwise.wilcox.test(MCE$CRT, MCE$Cogn_status, 
+                     p.adjust.method = "BH")
+pairwise.wilcox.test(MCE$Fluence_supermarket, MCE$Cogn_status, 
+                     p.adjust.method = "BH")
+
+
+#Factor vairables (doenst work)
+intact_aff <- subset(MCE, Cogn_status=="Cognitively_intact" | Cogn_status=="Affective")
+intact_mci <- subset(MCE, Cogn_status=="Cognitively_intact" | Cogn_status=="MCI")
+intact_dem <- subset(MCE, Cogn_status=="Cognitively_intact" | Cogn_status=="Dementia")
+aff_mci <- subset(MCE, Cogn_status=="Affective" | Cogn_status=="MCI")
+aff_dem <- subset(MCE, Cogn_status=="Affective" | Cogn_status=="Dementia")
+mci_dem <- subset(MCE, Cogn_status=="MCI" | Cogn_status=="Dementia")
+
+intact_aff$Cogn_status <- droplevels(intact_aff$Cogn_status)
+intact_mci$Cogn_status <- droplevels(intact_mci$Cogn_status)
+intact_dem$Cogn_status <- droplevels(intact_dem$Cogn_status)
+aff_mci$Cogn_status <- droplevels(aff_mci$Cogn_status)
+aff_dem$Cogn_status <- droplevels(aff_dem$Cogn_status)
+mci_dem$Cogn_status <- droplevels(mci_dem$Cogn_status)
+
+## For sex
+fisher.test(table(intact_aff$Gender, intact_aff$Cogn_status)) 
+fisher.test(table(intact_mci$Gender, intact_mci$Cogn_status)) 
+fisher.test(table(intact_dem$Gender, intact_dem$Cogn_status)) 
+fisher.test(table(aff_mci$Gender, aff_mci$Cogn_status))
+fisher.test(table(aff_dem$Gender, aff_dem$Cogn_status)) 
+fisher.test(table(mci_dem$Gender, mci_dem$Cogn_status)) 
+
+## For immigrant status
+fisher.test(table(intact_aff$Minority_majority, intact_aff$Cogn_status)) 
+fisher.test(table(intact_mci$Minority_majority, intact_mci$Cogn_status)) 
+fisher.test(table(intact_dem$Minority_majority, intact_dem$Cogn_status)) 
+fisher.test(table(aff_mci$Minority_majority, aff_mci$Cogn_status)) 
+fisher.test(table(aff_dem$Minority_majority, aff_dem$Cogn_status)) 
+fisher.test(table(mci_dem$Minority_majority, mci_dem$Cogn_status)) 
+```
+## APPENDIX 1
+```{r}
+Appendix_1 <-
+  tbl_summary(
+    MCE, 
+    include = c(Country), 
+    by = Cogn_status, 
+    label = list(
+      Country ~ ""), 
+    statistic = list(
+      all_categorical() ~ "{n}"
+    ), 
+    missing = "no" 
+  ) |> 
+  modify_header(label = "") |> 
+  bold_labels()
+
+Appendix_1
+```
+
+## APPENDIX 2
+```{r}
+Appendix_2 <-
+  tbl_summary(
+    MCE, 
+    include = c(Country_of_origin), 
+    label = list(
+      Country_of_origin ~ ""), 
+    statistic = list(
+      all_categorical() ~ "{n}"
+    ), 
+    missing = "no" 
+  ) |> 
+  modify_header(label = "") |> 
+  bold_labels()
+
+Appendix_2
 ```
 
 
-## Create new dataframes for later use.
-
+## Create dataframe for cognitively intact
 ```{r}
 cognitively_intact <- subset(MCE, Cogn_status == "Cognitively_intact")
   cognitively_intact$Cogn_status <- droplevels(cognitively_intact$Cogn_status)
 ```
 
-## TABLE 1
+## Descriptive statistics per ethnicity (Supplementary table 1)
 ```{r}
-summary(tableby(Cogn_status~ Age + Gender + Years_of_school + Minority_majority, data=MCE,
-                numeric.stats=c("N", "mean", "sd")))
-summary(tableby(Cogn_status~ Diagnosis, data=MCE,
-                numeric.stats=c("N", "mean", "sd")))
-summary(tableby(Cogn_status ~ RUDAS + mce_normal, data=MCE, 
-                numeric.stats=c("N", "median", "q1q3"), 
-                numeric.test="kwt"))
+Sup_Table_1 <-
+  tbl_summary(
+    cognitively_intact, 
+    include = c(Age, Gender, Years_of_school, RUDAS, mce_normal), 
+    by = Minority_majority, 
+    label = list(
+      Age ~ "Age, years",
+      Gender ~ "Female sex (%)",
+      Years_of_school ~ "Education, years",
+      RUDAS ~ "RUDAS score",
+      mce_normal ~ "MCE score"), 
+    statistic = list(
+      Age ~ "{mean} ({sd})",
+      Years_of_school ~ "{mean} ({sd})",
+      RUDAS ~ "{median} [{p25}, {p75}]",
+      mce_normal ~ "{median} [{p25}, {p75}]",
+      all_categorical() ~ "{n} ({p}%)"
+    ), 
+    digits = list(
+      all_continuous() ~ 1,
+      all_categorical() ~ c(0, 1)
+    ),
+    missing = "no" 
+  ) |> 
+  add_p() |> 
+  modify_header(label = "") |> 
+  bold_labels()
 
-```
-## APPENDIX 1
-```{r}
-table(MCE$Country, MCE$Cogn_status)
-```
-
-## APPENDIX 2
-```{r}
-table(MCE$Country_of_origin)
-```
+Sup_Table_1
 
 
-## Descriptive statistics per ethnicity (Sup table 1)
-```{r}
-summary(tableby(Minority_majority ~ Age + Gender + Years_of_school + Cogn_status, data=cognitively_intact, 
-                numeric.stats=c("N", "mean", "sd"), 
-                numeric.test="kwt"))
+#Plot of MCE scores by cognitive status and ethnicity
+MCE_no_affective <- subset(MCE, Cogn_status != "Affective")
+  MCE_no_affective$Cogn_status <- droplevels(MCE_no_affective$Cogn_status)
 
-
-summary(tableby(Minority_majority ~ RUDAS + mce_normal, data=cognitively_intact, 
-                numeric.stats=c("N", "median", "q1q3"), 
-                numeric.test="kwt"))
+ggplot(MCE_no_affective, aes (Cogn_status, mce_normal, color = Minority_majority))+
+  geom_boxplot(outlier.shape = NA) + 
+  geom_jitter(aes(color = Minority_majority), position = position_jitterdodge(dodge.width = 0.8), alpha = 0.5) +
+  theme_minimal() +
+  scale_color_manual(values = c("#56B4E9", "#E69F00"), labels = c("Majority" = "Native-born", "Minority" = "Foreign")) +
+  scale_x_discrete(labels = c("Cognitively_intact" = "Cognitively intact"))+
+  labs(y = "MCE score", x = "") +
+  theme(
+    plot.title = element_text(family = "serif", size = 20, face = "bold", hjust = 0.5),
+    axis.title.x = element_text(family = "serif", size = 14),
+    axis.title.y = element_text(family = "serif", size = 14),
+    axis.text.x = element_text(size = 14, color = "black", family = "serif"),
+    legend.position = c (0.90, 0.88), legend.title = element_blank(), legend.box = "horizontal", legend.text = element_text(size=12, family = "serif"))
 ```
 
 ## Plotting differences (age, education, rudas, mce) by cognitive status
@@ -222,18 +364,6 @@ ggplot(MCE, aes(Cogn_status, mce_normal)) +
     step_increase = 0.05) + 
   labs(y = "MCE", x = "Cognitive status", title = "MCE by cognitive status")+
   theme_light()
-
-ggplot(MCE, aes(Cogn_status, mce_normal)) +
-    geom_jitter(col = "#87CEFA", alpha = 0.3, size = 1) +
-  geom_violin(fill = "#FFA07A", alpha = 0.6) + 
-  geom_signif(comparisons = list(
-    c("Cognitively_intact", "Affective"), 
-    c("Affective", "MCI"),
-    c("MCI", "Dementia")),
-              map_signif_level = TRUE,
-    step_increase = 0.05) + 
-  labs(y = "MCE", x = "Cognitive status", title = "MCE by cognitive status")+
-  theme_light()
 ```
 
 ## LINEAR REGRESSION
@@ -247,7 +377,7 @@ mce_lm_assumptions <- cognitively_intact[!is.na(cognitively_intact$Years_of_scho
                                           & !is.na(cognitively_intact$mce_normal)
                                           & !is.na(cognitively_intact$Site), ]
 
-#create log and raw models
+#create model
 model_mce <- lm(mce_normal ~ Years_of_school + Age + Minority_majority + Gender + Site, data = mce_lm_assumptions)
 
 #Normality
@@ -280,19 +410,15 @@ abline(h=0.1, col = "red")
 
 ## Linear regression
 ```{r}
-lm_model_1 <- lm(mce_normal ~ Years_of_school + Age + Minority_majority + Gender + Site, data = cognitively_intact)
+lm_model_1 <- lm(mce_normal ~ Years_of_school + Age + Minority_majority + Gender, data = cognitively_intact)
 summary(lm_model_1)
-
-library(sensemakr)      
+    
 partial_r2(lm_model_1)
 
-#With interaction
-lm_model_2 <- lm(mce_normal ~ Years_of_school + Age + Site + Site*Age + Site*Years_of_school, data = cognitively_intact)
-summary(lm_model_2)
+#Table 2
+Table_3 <- tbl_regression(lm_model_1)
 
-#make adjusted MCE score
-MCE$adjusted_mce <- (MCE$mce_normal - (0.75187*MCE$Years_of_school) + (0.18621*MCE$Age))
-MCE$adjusted_mce <- round(MCE$adjusted_mce)
+Table_3
 ```
 
 
@@ -310,61 +436,182 @@ ggplot(cognitively_intact, aes(Age, mce_normal)) +
 ggplot(cognitively_intact, aes(Years_of_school, mce_normal, color = Site)) + 
   geom_jitter() +
   geom_smooth(method = "lm")
-
-ggplot(cognitively_intact, aes(Site, mce_normal)) + 
-  geom_boxplot(col = "green4") 
 ```
-# Plotting the raw scores
+
+
+
+
+# Normative data - Multiple linear regression with age and education
 ```{r}
-library(ggplot2)
-ggplot(MCE, aes(Age, mce_normal, color = Cogn_status)) + 
-  geom_jitter() +
+#Create dataframe with cognitively intact [complete data]
+Normative <- cognitively_intact
+Normative <- na.omit(Normative[, c("Years_of_school", "mce_normal", "Age")])
+
+  
+#Make groups in Normative
+Normative$Age_Group <- cut(Normative$Age, 
+                           breaks = c(17, 29, 39, 49, 59, 69, 79, 91), 
+                           labels = c('18-29', '30-39', '40-49', '50-59', '60-69', '70-79', '80-90'), 
+                           right = TRUE, 
+                           include.lowest = TRUE)
+Normative$Education_group <- cut(Normative$Years_of_school, 
+                           breaks = c(0, 3, 8, 12, 18), 
+                           labels = c('0-3', '4-8', '9-12', '13-17'), 
+                           right = TRUE, 
+                           include.lowest = TRUE,
+                           ordered = TRUE)
+ 
+  
+#Histograms
+hist(Normative$mce_normal) #non-normal (right skewed)
+hist(Normative$Age) #normal
+hist(Normative$Years_of_school) #non-normal (flat)
+
+#Ceiling effect
+table(Normative$mce_normal) #10
+  (10/915)*100 #1.1%
+
+#Effect of covariates
+ggplot(Normative, aes(Years_of_school, mce_normal)) + 
+  geom_jitter(col = "green4") +
   geom_smooth(method = "loess")
-#ggplot(MCE_noNA, aes(Age, mce_normal, color = Cogn_status)) + 
-#  geom_jitter() +
-#  geom_smooth(method = "loess")
+ggplot(Normative, aes(Age, mce_normal)) + 
+  geom_jitter(col = "green4") +
+  geom_smooth(method = "loess")
+
+
+# See if age need to be squared
+ggplot(Normative, aes(x = Age, y = mce_normal)) +
+  geom_point(color = "black", alpha = 0.5) +
+  labs(title = "Linear vs. Quadratic Fit",
+       x = "Age",
+       y = "MCE") +
+  theme_minimal(base_size = 14) +
+  geom_smooth(method = "lm", formula = y ~ x, color = "red", se = FALSE, linewidth = 1.2) +
+  geom_smooth(method = "lm", formula = y ~ I(x^2), color = "darkblue", se = FALSE, linewidth = 1.2) +
+  geom_smooth(method = "loess", color = "black", se = TRUE, linewidth = 1.2) +
+  theme(legend.position = "top") +
+  scale_color_manual(values = c("red" = "red", "darkblue" = "darkblue", "black", "black")) +
+  annotate("text", x = 77, y = max(Normative$mce_normal) - 5, label = "Linear (red)", color = "red") +
+  annotate("text", x = 77, y = max(Normative$mce_normal) - 12, label = "Quadratic (blue)", color = "darkblue")+
+  annotate("text", x = 77, y = max(Normative$mce_normal) - 22, label = "Loess (black)", color = "black")
+
+
+
+
+# Create multiple linear regression with age and education
+model_lm_normative <- lm(mce_normal ~ Years_of_school + Age, data = Normative)
+  summary(model_lm_normative)
+model_lm_normative_2 <- lm(mce_normal ~ Years_of_school + Age + I(Age^2), data = Normative)
+  summary(model_lm_normative_2)
+  
+# R² and Adjusted R²
+summary(model_lm_normative)$adj.r.squared #.4132
+summary(model_lm_normative_2)$adj.r.squared #.46
+
+# AIC and BIC
+AIC(model_lm_normative) #6262
+AIC(model_lm_normative_2) #6187
+
+# Likelihood Ratio Test (ANOVA)
+anova(model_lm_normative, model_lm_normative_2) #significantly better
+
+#Independence of errors
+hist(model_lm_normative$residuals, main = "Histogram of Residuals")
+#Homoscedasticity
+plot(model_lm_normative$residuals ~ model_lm_normative$fitted.values)
+abline(h = 0, col = "red")
+#Normality of errors
+qqnorm(model_lm_normative$residuals)
+qqline(model_lm_normative$residuals, col = "red")
+#No multicollinearity
+vif(model_lm_normative)
+
+
+#Make the normative data with quadratic age and education
+#Make model
+model <- lm(mce_normal ~ Age + I(Age^2) + Years_of_school, data = Normative)
+model$coefficients
+  intercept <- 73.866267583683  
+  coef_age <- 0.472194134016 
+  coef_age_sq <- -0.006452719417  
+  coef_edu <- 0.808196412539
+
+
+#Predictions 
+Normative$predicted <- predict(model, newdata = Normative)
+Normative$residuals <- Normative$mce_normal - Normative$predicted #residuals
+  hist(Normative$residuals)
+residual_sd <- sd(Normative$residuals) #sd of residuals (Standard error of the estimate - SEE)
+
+predict_percentiles <- function(Age, Years_of_school) {
+  predicted_mean <- intercept + coef_age * Age + coef_age_sq * (Age^2) + coef_edu * Years_of_school
+  
+   percentiles <- qnorm(c(0.05, 0.10, 0.25, 0.50), mean = predicted_mean, sd = residual_sd)
+  
+  return(data.frame(
+    Age = Age,
+    Years_of_school = Years_of_school,
+    P5 = percentiles[1],
+    P10 = percentiles[2],
+    P25 = percentiles[3],
+    P50 = percentiles[4],
+    P90 = percentiles[5]
+  ))
+}
+
+
+age_groups <- data.frame(
+  Age_Group = c('18-29', '30-39', '40-49', '50-59', '60-69', '70-79', '80-90'),
+  Age_Center = c(24, 34, 44, 54, 64, 74, 85)  # Approximate midpoint of each range
+)
+
+edu_groups <- data.frame(
+  Education_Group = c('No-little education', 'Primary education', 'Secondary education', 'Post-secondary education'),
+  Education_Center = c(2, 6, 10, 15)  # Approximate midpoint of each range
+)
+
+
+percentile_table <- expand.grid(Education_Center = edu_groups$Education_Center, Age_Center = age_groups$Age_Center) %>%
+  rowwise() %>%
+  do(predict_percentiles(.$Age_Center, .$Education_Center)) %>%
+  ungroup()
+
+percentile_table <- percentile_table %>%
+    left_join(edu_groups, by = c("Years_of_school" = "Education_Center")) %>%
+  left_join(age_groups, by = c("Age" = "Age_Center")) %>%
+  select(Age_Group, Education_Group, P5, P10, P25, P50)  # Keep relevant columns
+
+percentile_table <- percentile_table %>%
+  mutate(across(starts_with("P"), ~ pmin(., 100)))  # Caps at 100
+
+
+# Convert percentile_summary to long format for easier plotting
+percentile_long <- percentile_table %>%
+  pivot_longer(cols = starts_with("P"), names_to = "Percentile", values_to = "Value")
+
+# Plot percentiles
+ggplot(percentile_long, aes(x = Age_Group, y = Value, color = Percentile)) +
+  geom_line(aes(group = Percentile)) +
+  facet_wrap(~ Education_Group) +
+  labs(title = "Percentiles of MCE score by Age and Education",
+       x = "Age Group",
+       y = "MCE Score") +
+  theme_minimal()
+
+
+#Make automatic table
+percentile_table %>%
+  select(Age_Group, Education_Group, P5, P10, P25, P50) %>%
+  gt() %>%
+  tab_header(title = "Percentile Predictions of MCE Scores",
+             subtitle = "Across Age Groups and Education Levels") %>%
+  fmt_number(columns = c(P5, P10, P25, P50), decimals = 0)
+
 ```
 
 
-# Simple ROC with normal mce
-```{r}
-MCE <- subset(MCE, Cogn_status!="Affective")
-MCE$any_no_impairment <- fct_collapse(MCE$Cogn_status, No_impairment = c("Cognitively_intact")) #not include affective
-  MCE$any_no_impairment <- fct_collapse(MCE$any_no_impairment, Any_impairment = c("MCI", "Dementia"))
-  MCE$any_no_impairment[MCE$any_no_impairment == "Affective"] <- NA #remove affective
-  MCE$any_no_impairment <- droplevels(MCE$any_no_impairment)
-
-MCE_noNA <- MCE[!is.na(MCE$mce_normal), ]  
-MCE_noNA <- MCE_noNA[!is.na(MCE_noNA$any_no_impairment), ] #remove affective
-MCE_noNA <- subset(MCE_noNA, Age >= 65) #remove younger than 65
-
-
-HC_dementia <- subset(MCE_noNA, Cogn_status=="Cognitively_intact" | Cogn_status=="Dementia")
-  HC_dementia$Cogn_status <- droplevels(HC_dementia$Cogn_status)
-HC_mci <- subset(MCE_noNA, Cogn_status=="Cognitively_intact" | Cogn_status=="MCI")
-  HC_mci$Cogn_status <- droplevels(HC_mci$Cogn_status)
-  
-  
-library(pROC)
-roc_any_no <- roc(MCE_noNA$any_no_impairment, MCE_noNA$mce_normal, 
-                  ci = TRUE,
-                  legacy.axes=TRUE,
-                  lwd = 4,
-                  levels=c("No_impairment", "Any_impairment"))
-roc_hc_dementia <- roc(HC_dementia$Cogn_status, HC_dementia$mce_normal, 
-                       ci = TRUE,                  
-                       legacy.axes=TRUE,
-                       lwd = 4,
-                       levels=c("Cognitively_intact", "Dementia"))
-roc_hc_mci <- roc(HC_mci$Cogn_status, HC_mci$mce_normal, 
-                       ci = TRUE,                  
-                       legacy.axes=TRUE,
-                       lwd = 4,
-                       levels=c("Cognitively_intact", "MCI"))
-```
-
-
-# Plotting normal roc with 95% CI
+#Functions for the accuracy analyses
 ```{r}
 ################################
 library(tidyverse)
@@ -385,57 +632,7 @@ process_roc <- function(roc_obj) {
 }
 
 ###########################
-options(scipen = 999)
 
-roc_mce_data_any_no <- process_roc(roc_any_no)
-roc_mce_data_HC_dementia <- process_roc(roc_hc_dementia)
-roc_mce_data_HC_mci <- process_roc(roc_hc_mci)
-
-auc_mce_any_no<-aucci(roc_any_no)
-auc_mce_HC_dementia<-aucci(roc_hc_dementia)
-auc_mce_HC_mci<-aucci(roc_hc_mci)
-
-roc_clinical_data<-rbind(
-  data.frame(FPR = 100*roc_mce_data_any_no$FPR, TPR = 100*roc_mce_data_any_no$TPR, Model = "Any_no model"),
-  data.frame(FPR = 100*roc_mce_data_HC_dementia$FPR, TPR = 100*roc_mce_data_HC_dementia$TPR, Model = "HC_dementia model"),
-  data.frame(FPR = 100*roc_mce_data_HC_mci$FPR, TPR = 100*roc_mce_data_HC_mci$TPR, Model = "HC_mci model")
-)
-
-roc_clinical_data$Model <- factor(roc_clinical_data$Model, levels = c(
-                                                      "Any_no model",
-                                                      "HC_dementia model",
-                                                      "HC_mci model"))
-
-AUC_clinical_plot<-ggplot(roc_clinical_data, aes(x = FPR, y = TPR, color = Model)) +
-  geom_step(linewidth = 1.2) +
-  geom_abline(slope = 1, intercept = 0, linetype = "dotted", color = "black", size = 0.8) +
-  scale_color_manual(values = c("Any_no model" = "#999999",
-                                "HC_dementia model" = "#E69F00",
-                                "HC_mci model" = "#56B4E9"),
-                     labels = c("Any vs. no impairment",
-                                "Dementia vs. no impairment",
-                                "MCI vs. no impairment")) +
-  theme_classic() +
-  theme(
-    plot.title = element_text(family = "serif", size = 20, face = "bold", hjust = 0.5),
-    axis.title.x = element_text(family = "serif", size = 14),
-    axis.title.y = element_text(family = "serif", size = 14)) +
-  labs(title = "AUROC: MCE normal", x = "100-Specificity", y = "Sensitivity") +
-    theme(legend.position = "bottom", legend.title = element_blank(), legend.box = "horizontal", legend.text = element_text(size=12)) +
-  guides(color = guide_legend(nrow=2)) +
-    annotate("segment", x = 40, xend = 43, y = 65, yend = 65, color = "#999999", size = 2) +
-  annotate("text", x = 45, y = 65, label = sprintf("AUC: %.2f (95%% CI: %.2f-%.2f)", auc_mce_any_no$AUC, auc_mce_any_no$CI[1], auc_mce_any_no$CI[3]), color = "black", hjust = 0, family = "serif", size = 5) +
-    annotate("segment", x = 40, xend = 43, y = 40, yend = 40, color = "#E69F00", size = 2) +
-  annotate("text", x = 45, y = 40, label = sprintf("AUC: %.2f (95%% CI: %.2f-%.2f)",auc_mce_HC_dementia$AUC, auc_mce_HC_dementia$CI[1], auc_mce_HC_dementia$CI[3]), color = "black", hjust = 0,  family = "serif", size = 5) +
-    annotate("segment", x = 40, xend = 43, y = 15, yend = 15, color = "#56B4E9", size = 2) +
-  annotate("text", x = 45, y = 15, label = sprintf("AUC: %.2f (95%% CI: %.2f-%.2f)",auc_mce_HC_mci$AUC, auc_mce_HC_mci$CI[1], auc_mce_HC_mci$CI[3]), color = "black", hjust = 0,  family = "serif", size = 5)
-
-AUC_clinical_plot
-```
-
-#performance metrics of the simple ROC
-```{r}
-library(pROC)
 compute_roc_metrics <- function(ROC_model) {
   auc_ci <- ci.auc(ROC_model, method = "bootstrap", boot.n = 2000)
   opt_method <- coords(ROC_model, "best", ret = c("threshold", "sensitivity", "specificity", "tn", "tp", "fn", "fp"))
@@ -464,37 +661,332 @@ compute_roc_metrics <- function(ROC_model) {
   cat(sprintf("LR+: %.2f (95%% CI: %.2f - %.2f)\n", lr_pos$sensitivity, LR_pos_CI[1], LR_pos_CI[2]))
   cat(sprintf("LR-: %.2f (95%% CI: %.2f - %.2f)\n", lr_neg$sensitivity, LR_neg_CI[1], LR_neg_CI[2]))
 }
+```
 
-compute_roc_metrics(ROC_model = roc_any_no)
-compute_roc_metrics(ROC_model = roc_hc_dementia)
-compute_roc_metrics(ROC_model = roc_hc_mci)
 
-# Use function also with adjusted MCE score
-roc_adjusted_mce <- roc(MCE_noNA$any_no_impairment, MCE_noNA$adjusted_mce, 
+# Simple ROC for Youden index
+```{r}
+MCE$any_no_impairment <- fct_collapse(MCE$Cogn_status, No_impairment = c("Cognitively_intact"))
+  MCE$any_no_impairment <- fct_collapse(MCE$any_no_impairment, Any_impairment = c("MCI", "Dementia"))
+  MCE$any_no_impairment <- droplevels(MCE$any_no_impairment)
+
+MCE_noNA <- MCE[!is.na(MCE$mce_normal), ]  
+MCE_noNA <- MCE_noNA[!is.na(MCE_noNA$any_no_impairment), ] 
+MCE_noNA <- subset(MCE_noNA, any_no_impairment != "Affective")
+MCE_noNA$any_no_impairment <- droplevels(MCE_noNA$any_no_impairment) 
+MCE_noNA <- subset(MCE_noNA, Age >= 65)                     #remove younger than 65
+  
+  
+roc_any_no <- roc(MCE_noNA$any_no_impairment, MCE_noNA$mce_normal, 
                   ci = TRUE,
                   legacy.axes=TRUE,
                   lwd = 4,
                   levels=c("No_impairment", "Any_impairment"))
-roc_adjusted_dementia <- roc(HC_dementia$Cogn_status, HC_dementia$adjusted_mce, 
+roc_any_no_rudas <- roc(MCE_noNA$any_no_impairment, MCE_noNA$RUDAS, 
                   ci = TRUE,
                   legacy.axes=TRUE,
                   lwd = 4,
-                  levels=c("Cognitively_intact", "Dementia"))
-roc_adjusted_mci <- roc(HC_mci$Cogn_status, HC_mci$adjusted_mce, 
-                  ci = TRUE,
-                  legacy.axes=TRUE,
-                  lwd = 4,
-                  levels=c("Cognitively_intact", "MCI"))
-compute_roc_metrics(ROC_model = roc_adjusted_mce)
-compute_roc_metrics(ROC_model = roc_adjusted_dementia)
-compute_roc_metrics(ROC_model = roc_adjusted_mci)
+                  levels=c("No_impairment", "Any_impairment"))
 
+
+compute_roc_metrics(ROC_model = roc_any_no)
+compute_roc_metrics(ROC_model = roc_any_no_rudas)
+
+roc.test(roc_any_no, roc_any_no_rudas, method = "delong")
+
+
+
+
+
+# Subanalyses of HC vs MCI and HC vs. dementia
+HC_dementia <- subset(MCE_noNA, Cogn_status=="Cognitively_intact" | Cogn_status=="Dementia")
+  HC_dementia$Cogn_status <- droplevels(HC_dementia$Cogn_status)
+
+HC_mci <- subset(MCE_noNA, Cogn_status=="Cognitively_intact" | Cogn_status=="MCI")
+  HC_mci$Cogn_status <- droplevels(HC_mci$Cogn_status)
+  
+  
+roc_hc_dementia <- roc(HC_dementia$Cogn_status, HC_dementia$mce_normal, 
+                       ci = TRUE,                  
+                       legacy.axes=TRUE,
+                       lwd = 4,
+                       levels=c("Cognitively_intact", "Dementia"))
+roc_hc_mci <- roc(HC_mci$Cogn_status, HC_mci$mce_normal, 
+                       ci = TRUE,                  
+                       legacy.axes=TRUE,
+                       lwd = 4,
+                       levels=c("Cognitively_intact", "MCI"))
+compute_roc_metrics(ROC_model = roc_hc_dementia)
+compute_roc_metrics(ROC_model = roc_hc_mci)
+roc.test(roc_any_no, roc_hc_mci, method = "delong")
+
+
+roc_hc_mci_rudas <- roc(HC_mci$Cogn_status, HC_mci$RUDAS, 
+                       ci = TRUE,                  
+                       legacy.axes=TRUE,
+                       lwd = 4,
+                       levels=c("Cognitively_intact", "MCI"))
+roc_hc_dementia_rudas <- roc(HC_dementia$Cogn_status, HC_dementia$RUDAS, 
+                       ci = TRUE,                  
+                       legacy.axes=TRUE,
+                       lwd = 4,
+                       levels=c("Cognitively_intact", "Dementia"))
+compute_roc_metrics(ROC_model = roc_hc_mci_rudas)
+compute_roc_metrics(ROC_model = roc_hc_dementia_rudas)
+
+
+roc.test(roc_hc_mci_rudas, roc_hc_mci, method = "delong")
+roc.test(roc_hc_dementia_rudas, roc_hc_dementia, method = "delong")
+
+
+#Plotting AUCS
+options(scipen = 999)
+
+roc_rudas_data_dementia <- process_roc(roc_hc_dementia_rudas)
+  roc_mce_data_HC_dementia <- process_roc(roc_hc_dementia)
+roc_mce_data_HC_mci <- process_roc(roc_hc_mci)
+  roc_rudas_data_HC_mci <- process_roc(roc_hc_mci_rudas)
+
+
+auc_rudas_dementia<-aucci(roc_hc_dementia_rudas)
+  auc_mce_HC_dementia<-aucci(roc_hc_dementia)
+auc_mce_HC_mci<-aucci(roc_hc_mci)
+  auc_rudas_HC_mci<-aucci(roc_hc_mci_rudas)
+
+
+roc_clinical_data<-rbind(
+  data.frame(FPR = 100*roc_rudas_data_dementia$FPR, TPR = 100*roc_rudas_data_dementia$TPR, Model = "HC_dementia_rudas model"),
+  data.frame(FPR = 100*roc_mce_data_HC_dementia$FPR, TPR = 100*roc_mce_data_HC_dementia$TPR, Model = "HC_dementia model"),
+  data.frame(FPR = 100*roc_mce_data_HC_mci$FPR, TPR = 100*roc_mce_data_HC_mci$TPR, Model = "HC_mci model"),
+  data.frame(FPR = 100*roc_rudas_data_HC_mci$FPR, TPR = 100*roc_rudas_data_HC_mci$TPR, Model = "HC_mci_rudas model")
+
+)
+
+roc_clinical_data$Model <- factor(roc_clinical_data$Model, levels = c(
+                                                      "HC_dementia_rudas model",
+                                                      "HC_dementia model",
+                                                      "HC_mci model",
+                                                      "HC_mci_rudas model"))
+
+AUC_mce_rudas_plot<-ggplot(roc_clinical_data, aes(x = FPR, y = TPR, color = Model, linetype = Model)) +
+  geom_step(linewidth = 1.2) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dotted", color = "black", size = 0.8) +
+  scale_color_manual(values = c("HC_dementia_rudas model" = "#E69F00",
+                                "HC_dementia model" = "#E69F00",
+                                "HC_mci model" = "#56B4E9",
+                                "HC_mci_rudas model"= "#56B4E9"),
+                     labels = c("Dementia vs. no impairment rudas",
+                                "Dementia vs. no impairment",
+                                "MCI vs. no impairment",
+                                "MCI vs. no impairment rudas")) +
+                     scale_linetype_manual(values = c(
+                       "HC_dementia_rudas model" = "dotted",
+                       "HC_dementia model" = "solid",
+                       "HC_mci model" = "solid",
+                       "HC_mci_rudas model" = "dotted"))+
+  theme_classic() +
+  theme(
+    plot.title = element_text("none"),
+    axis.title.x = element_text(family = "serif", size = 14),
+    axis.title.y = element_text(family = "serif", size = 14)) +
+  labs(title = "", x = "100-Specificity", y = "Sensitivity") +
+    theme(legend.position = "none", legend.title = element_blank(), legend.box = "horizontal", legend.text = element_text(size=12)) +
+  guides(color = guide_legend(nrow=2)) +
+    
+    annotate("text", x = 50, y = 40, label = sprintf("Dementia"), color = "black", hjust = 0,  family = "serif", size = 5,   fontface = "bold") +
+    annotate("segment", x = 43, xend = 48, y = 35, yend = 35, color = "#E69F00", size = 2) +
+    annotate("text", x = 50, y = 35, label = sprintf("MCE      AUC: %.2f (95%% CI: %.2f-%.2f) ***",auc_mce_HC_dementia$AUC, auc_mce_HC_dementia$CI[1], auc_mce_HC_dementia$CI[3]), color = "black", hjust = 0,  family = "serif", size = 5) +
+    annotate("segment", x = 43, xend = 48, y = 30, yend = 30, color = "#E69F00", size = 1.4, linetype = "dotted") +
+    annotate("text", x = 50, y = 30, label = sprintf("RUDAS AUC: %.2f (95%% CI: %.2f-%.2f)", auc_rudas_dementia$AUC, auc_rudas_dementia$CI[1], auc_rudas_dementia$CI[3]), color = "black", hjust = 0, family = "serif", size = 5) +
+  
+  
+    annotate("text", x = 50, y = 20, label = sprintf("MCI"), color = "black", hjust = 0,  family = "serif", size = 5, fontface = "bold")+
+
+    annotate("segment", x = 43, xend = 48, y = 15, yend = 15, color = "#56B4E9", size = 2) +
+  annotate("text", x = 50, y = 15, label = sprintf("MCE      AUC: %.2f (95%% CI: %.2f-%.2f) **",auc_mce_HC_mci$AUC, auc_mce_HC_mci$CI[1], auc_mce_HC_mci$CI[3]), color = "black", hjust = 0,  family = "serif", size = 5)+
+    
+  annotate("segment", x = 43, xend = 48, y = 10, yend = 10, color = "#56B4E9", size = 1.4, linetype = "dotted") +
+  annotate("text", x = 50, y = 10, label = sprintf("RUDAS AUC: %.2f (95%% CI: %.2f-%.2f)",auc_rudas_HC_mci$AUC, auc_rudas_HC_mci$CI[1], auc_rudas_HC_mci$CI[3]), color = "black", hjust = 0,  family = "serif", size = 5)
+
+AUC_mce_rudas_plot
 ```
 
 
-#IMPUTED VALUES AND ALTERNATIVE FLUENCIES
 
-##Imputed values at NA + including food/animals fluency
+
+
+
+
+
+
+#Use regression based normative data to identify cognitive impairment (any vs. none)
+```{r}
+MCE$any_no_impairment <- fct_collapse(MCE$Cogn_status, No_impairment = c("Cognitively_intact")) #not include affective
+  MCE$any_no_impairment <- fct_collapse(MCE$any_no_impairment, Any_impairment = c("MCI", "Dementia"))
+  MCE$any_no_impairment[MCE$any_no_impairment == "Affective"] <- NA #remove affective
+  MCE$any_no_impairment <- droplevels(MCE$any_no_impairment)
+  
+percentile_table$Age_Group <- as.factor(percentile_table$Age_Group)
+percentile_table$Education_Group <- as.factor(percentile_table$Education_Group)
+
+MCE_older_65 <- subset(MCE, Age >= 65) #remove younger than 65
+
+
+MCE_older_65$Age_Group <- cut(MCE_older_65$Age, 
+                           breaks = c(17, 29, 39, 49, 59, 69, 79, 91), 
+                           labels = c('18-29', '30-39', '40-49', '50-59', '60-69', '70-79', '80-90'), 
+                           right = TRUE, 
+                           include.lowest = TRUE)
+MCE_older_65$Education_Group <- cut(MCE_older_65$Years_of_school, 
+                           breaks = c(0, 3, 8, 12, 18), 
+                           labels = c('No-little education', 'Primary education', 'Secondary education', 'Post-secondary education'), 
+                           right = TRUE, 
+                           include.lowest = TRUE)
+
+adding_percentiles <- MCE_older_65 %>%
+  left_join(percentile_table, by = c("Age_Group", "Education_Group"))
+
+adding_percentiles <- adding_percentiles %>%
+  mutate(twentyfifth_percentile_normative_classification = ifelse(mce_normal < P25, "Any_impairment", "No_impairment"))
+adding_percentiles <- adding_percentiles %>%
+  mutate(tenth_percentile_normative_classification = ifelse(mce_normal < P10, "Any_impairment", "No_impairment"))
+adding_percentiles <- adding_percentiles %>%
+  mutate(fifth_percentile_normative_classification = ifelse(mce_normal < P5, "Any_impairment", "No_impairment"))
+adding_percentiles$twentyfifth_percentile_normative_classification <- as.factor(adding_percentiles$twentyfifth_percentile_normative_classification)
+adding_percentiles$tenth_percentile_normative_classification <- as.factor(adding_percentiles$tenth_percentile_normative_classification)
+adding_percentiles$fifth_percentile_normative_classification <- as.factor(adding_percentiles$fifth_percentile_normative_classification)
+
+
+######################## FOR TABLE 4 ##############################
+
+#Raw RUDAS values
+adding_percentiles$rudas_cutoff_24_25 <- ifelse(adding_percentiles$RUDAS >=25, "No_impairment", "Any_impairment")
+adding_percentiles$rudas_cutoff_24_25 <- as.factor(adding_percentiles$rudas_cutoff_24_25)
+confusionMatrix(adding_percentiles$rudas_cutoff_24_25, adding_percentiles$any_no_impairment, positive = "Any_impairment")
+  (0.775)/(1-0.855) #LR+: 5.34
+  (1-0.755)/(0.855) #LR-: 0.287
+
+adding_percentiles$rudas_cutoff_25_26 <- ifelse(adding_percentiles$RUDAS >=26, "No_impairment", "Any_impairment")
+adding_percentiles$rudas_cutoff_25_26 <- as.factor(adding_percentiles$rudas_cutoff_25_26)
+confusionMatrix(adding_percentiles$rudas_cutoff_25_26, adding_percentiles$any_no_impairment, positive = "Any_impairment")
+  (0.775)/(1-0.855) #LR+: 5.34
+  (1-0.755)/(0.855) #LR-: 0.287
+
+#Raw MCE values
+adding_percentiles$mce_cutoff73_74 <- ifelse(adding_percentiles$mce_normal >=74, "No_impairment", "Any_impairment")
+adding_percentiles$mce_cutoff73_74 <- as.factor(adding_percentiles$mce_cutoff73_74)
+confusionMatrix(adding_percentiles$mce_cutoff73_74, adding_percentiles$any_no_impairment, positive = "Any_impairment")
+  (0.926)/(1-0.796) #LR+: 
+  (1-0.926)/(0.796) #LR-: 
+
+#25th percentile 
+confusionMatrix(adding_percentiles$twentyfifth_percentile_normative_classification, adding_percentiles$any_no_impairment, positive = "Any_impairment")
+  #Accuracy: 829, sen: 928, spec: 730, ppv: 773, npv: 911
+  (0.928)/(1-0.730) #LR+: 
+  (1-0.928)/(0.730) #LR-: 
+#10th percentile 
+confusionMatrix(adding_percentiles$tenth_percentile_normative_classification, adding_percentiles$any_no_impairment, positive = "Any_impairment")
+  #Accuracy: 858, sen: 862, spec: 855, ppv: 855, npv: 862
+  (0.862)/(1-0.855) #LR+: 
+  (1-0.862)/(0.855) #LR-: 
+#Fifth percentile
+confusionMatrix(adding_percentiles$fifth_percentile_normative_classification, adding_percentiles$any_no_impairment, positive = "Any_impairment")
+  #Accuracy: 841, sen: 778, spec: 902, ppv: 887, npv: 804
+  (0.778)/(1-0.902) #LR+: 
+  (1-0.778)/(0.902) #LR-: 
+
+
+
+#Classification of different classes
+table(adding_percentiles$rudas_cutoff_24_25, adding_percentiles$Cogn_status)
+  (253+71)/384  #Overall accuracy
+  (253/270)     #
+  (71/114)     
+table(adding_percentiles$rudas_cutoff_25_26, adding_percentiles$Cogn_status)
+  
+
+ 
+table(adding_percentiles$mce_cutoff73_74, adding_percentiles$Cogn_status)
+  (253+71)/384  
+  (253/270)    
+  (71/114)     
+table(adding_percentiles$twentyfifth_percentile_normative_classification, adding_percentiles$Cogn_status)
+  (253+71)/384  
+  (253/270)     
+  (71/114)      
+table(adding_percentiles$tenth_percentile_normative_classification, adding_percentiles$Cogn_status)
+  (253+71)/384  
+  (253/270)     
+  (71/114)      
+table(adding_percentiles$fifth_percentile_normative_classification, adding_percentiles$Cogn_status)
+  (236+58)/384  
+  (236/270)     
+  (58/114)      
+
+levels(adding_percentiles_HC_dementia$twentyfifth_percentile_normative_classification)
+
+
+
+
+#Dementia and MCI
+#Dementia
+adding_percentiles_HC_dementia <- subset(adding_percentiles, Cogn_status=="Cognitively_intact" | Cogn_status=="Dementia")
+  adding_percentiles_HC_dementia$Cogn_status <- droplevels(adding_percentiles_HC_dementia$Cogn_status)
+  adding_percentiles_HC_dementia <- adding_percentiles_HC_dementia %>%
+  mutate(Cogn_status = recode(Cogn_status,
+                              "Cognitively_intact" = "No_impairment",
+                              "Dementia" = "Any_impairment"))
+confusionMatrix(adding_percentiles_HC_dementia$twentyfifth_percentile_normative_classification, adding_percentiles_HC_dementia$Cogn_status, positive = "Any_impairment")
+  0.9643/(1-0.730) #LR+
+  (1-0.9643)/0.730 #LR-
+confusionMatrix(adding_percentiles_HC_dementia$tenth_percentile_normative_classification, adding_percentiles_HC_dementia$Cogn_status, positive = "Any_impairment")
+  0.9325/(1-0.8546) #LR+
+  (1-0.9325)/0.8546 #LR-
+confusionMatrix(adding_percentiles_HC_dementia$fifth_percentile_normative_classification, adding_percentiles_HC_dementia$Cogn_status, positive = "Any_impairment")
+  0.8690/(1-0.9021) #LR+
+  (1-0.8690)/0.9021 #LR-
+
+#MCI
+adding_percentiles_HC_mci <- subset(adding_percentiles, Cogn_status=="Cognitively_intact" | Cogn_status=="MCI")
+  adding_percentiles_HC_mci$Cogn_status <- droplevels(adding_percentiles_HC_mci$Cogn_status)
+  adding_percentiles_HC_mci <- adding_percentiles_HC_mci %>%
+  mutate(Cogn_status = recode(Cogn_status,
+                              "Cognitively_intact" = "No_impairment",
+                              "MCI" = "Any_impairment"))
+confusionMatrix(adding_percentiles_HC_mci$twentyfifth_percentile_normative_classification, adding_percentiles_HC_mci$Cogn_status, positive = "Any_impairment")
+  0.8171/(1-0.730) #LR+
+  (1-0.8171)/0.730 #LR-
+confusionMatrix(adding_percentiles_HC_mci$tenth_percentile_normative_classification, adding_percentiles_HC_mci$Cogn_status, positive = "Any_impairment")
+  0.6463/(1-0.8546) #LR+
+  (1-0.6463)/0.8546 #LR-
+confusionMatrix(adding_percentiles_HC_mci$fifth_percentile_normative_classification, adding_percentiles_HC_mci$Cogn_status, positive = "Any_impairment")
+  0.500/(1-0.902) #LR+
+  (1-0.500)/0.902 #LR-
+```
+
+# Supplementary Table 5. Subanalysis divided by ethnicity 
+```{r}
+minority <- subset(MCE_noNA, Minority_majority == "Minority")
+majority <- subset(MCE_noNA, Minority_majority == "Majority")
+
+roc_minority <- roc(minority$any_no_impairment, minority$mce_normal, 
+                  ci = TRUE,
+                  legacy.axes=TRUE,
+                  lwd = 4,
+                  levels=c("No_impairment", "Any_impairment"))
+roc_majority <- roc(majority$any_no_impairment, majority$mce_normal, 
+                  ci = TRUE,
+                  legacy.axes=TRUE,
+                  lwd = 4,
+                  levels=c("No_impairment", "Any_impairment"))
+
+compute_roc_metrics(ROC_model = roc_minority)
+compute_roc_metrics(ROC_model = roc_majority)
+roc.test(roc_minority, roc_majority, method = "delong")
+```
+
+#IMPUTED VALUES AND ALTERNATIVE FLUENCIES
+# Supplementary Table 6. Imputed values at NA + including food/animals fluency
 ```{r}
 #Make 28 the max of food and animal fluency
 MCE["Fluence_food"][MCE["Fluence_food"] > 28.5] <- 28
@@ -502,7 +994,6 @@ MCE["Fluence_animals"][MCE["Fluence_animals"] > 28.5] <- 28
 
 
 #When supermarket fluency is NA impute the food fluency, then animals if food NA
-library(dplyr)
 imputedMCE <- MCE %>%
   mutate(any_fluency = coalesce(Fluence_supermarket, Fluence_food, Fluence_animals))
 imputedMCE <- imputedMCE[!is.na(imputedMCE$Years_of_school), ]
@@ -518,7 +1009,6 @@ imputedMCE <- subset(imputedMCE, missing <=1)
 imputedMCE_oneNA <- imputedMCE[, c("Age", "Years_of_school", "RUDAS", "any_fluency", "RPT_learning", "RPT_recall", "RPT_recognition_total", "CRT")]
 
 #use mice to impute missing values
-library(mice)
 dt.mice <- mice(imputedMCE_oneNA, 
                 m = 5,
                 maxit = 5, 
@@ -528,476 +1018,48 @@ completed_data <- complete(dt.mice, action = 1)
 imputedMCE[, c("Age", "Years_of_school", "RUDAS", "any_fluency", "RPT_learning", "RPT_recall", "RPT_recognition_total", "CRT")] <- completed_data
 
 imputedMCE$mce_total <- rowSums(imputedMCE[, c("RUDAS", "any_fluency", "RPT_learning", "RPT_recall", "RPT_recognition_total", "CRT")], na.rm = FALSE)
-```
 
-# [Imputed] K-fold logistic regression
-```{r}
 imputedMCE_noNA <- imputedMCE[!is.na(imputedMCE$Years_of_school), ]
 imputedMCE_noNA <- imputedMCE_noNA[!is.na(imputedMCE_noNA$mce_total), ]  
 imputedMCE_noNA <- imputedMCE_noNA[!is.na(imputedMCE_noNA$Age), ]
 imputedMCE_noNA <- imputedMCE_noNA[!is.na(imputedMCE_noNA$any_no_impairment), ]
+imputedMCE_noNA <- subset(imputedMCE_noNA, any_no_impairment != "Affective") 
+imputedMCE_noNA$any_no_impairment <- droplevels(imputedMCE_noNA$any_no_impairment)
 imputedMCE_noNA <- subset(imputedMCE_noNA, Age >= 65) #remove younger than 65
 
-imputed_HC_dementia <- subset(imputedMCE_noNA, Cogn_status=="Cognitively_intact" | Cogn_status=="Dementia")
-  imputed_HC_dementia$Cogn_status <- droplevels(imputed_HC_dementia$Cogn_status)
-imputed_HC_mci <- subset(imputedMCE_noNA, Cogn_status=="Cognitively_intact" | Cogn_status=="MCI")
-  imputed_HC_mci$Cogn_status <- droplevels(imputed_HC_mci$Cogn_status)
 
 #ROC k-fold
-library(pROC)
 imputed_roc_any_no <- roc(imputedMCE_noNA$any_no_impairment, imputedMCE_noNA$mce_total, 
                   ci = TRUE,
                   legacy.axes=TRUE,
                   lwd = 4,
                   levels=c("No_impairment", "Any_impairment"))
-imputed_roc_hc_dementia <- roc(imputed_HC_dementia$Cogn_status, imputed_HC_dementia$mce_total, 
-                       ci = TRUE,                  
-                       legacy.axes=TRUE,
-                       lwd = 4,
-                       levels=c("Cognitively_intact", "Dementia"))
-imputed_roc_hc_mci <- roc(imputed_HC_mci$Cogn_status,imputed_HC_mci$mce_total, 
-                       ci = TRUE,                  
-                       legacy.axes=TRUE,
-                       lwd = 4,
-                       levels=c("Cognitively_intact", "MCI"))
+
 
 
 compute_roc_metrics(ROC_model = imputed_roc_any_no)
-compute_roc_metrics(ROC_model = imputed_roc_hc_dementia)
-compute_roc_metrics(ROC_model = imputed_roc_hc_mci)
-
-```
-
-# RUDAS
-```{r}
-RUDAS <- MCE[!is.na(MCE$RUDAS), ]
-RUDAS <- RUDAS[!is.na(RUDAS$any_no_impairment), ]  
-RUDAS <- subset(RUDAS, Cogn_status!="Affective")
-RUDAS$any_no_impairment[RUDAS$any_no_impairment == "Affective"] <- NA #remove affective
-  RUDAS$any_no_impairment <- droplevels(RUDAS$any_no_impairment)
-  RUDAS <- subset(RUDAS, Age >= 65) #remove younger than 65
-
-
-RUDAS_HC_dementia <- subset(RUDAS, Cogn_status=="Cognitively_intact" | Cogn_status=="Dementia")
-  RUDAS_HC_dementia$Cogn_status <- droplevels(RUDAS_HC_dementia$Cogn_status)
-RUDAS_HC_mci <- subset(RUDAS, Cogn_status=="Cognitively_intact" | Cogn_status=="MCI")
-  RUDAS_HC_mci$Cogn_status <- droplevels(RUDAS_HC_mci$Cogn_status)
-
-  
-library(pROC)
-model_rudas_any_no <- roc(RUDAS$any_no_impairment, RUDAS$RUDAS, 
-                  ci = TRUE,
-                  legacy.axes=TRUE,
-                  lwd = 4,
-                  levels=c("No_impairment", "Any_impairment"))
-model_rudas_HC_dementia <- roc(RUDAS_HC_dementia$Cogn_status, RUDAS_HC_dementia$RUDAS, 
-                  ci = TRUE,
-                  legacy.axes=TRUE,
-                  lwd = 4,
-                  levels=c("Cognitively_intact", "Dementia"))
-model_rudas_HC_mci <- roc(RUDAS_HC_mci$Cogn_status, RUDAS_HC_mci$RUDAS, 
-                  ci = TRUE,
-                  legacy.axes=TRUE,
-                  lwd = 4,
-                  levels=c("Cognitively_intact", "MCI"))
-
-
-compute_roc_metrics(ROC_model = model_rudas_any_no)
-compute_roc_metrics(ROC_model = model_rudas_HC_dementia)
-compute_roc_metrics(ROC_model = model_rudas_HC_mci)
-```
-
-# delong
-```{r}
-roc.test(roc_any_no, roc_adjusted_mce, method = "delong") #adjust better
-roc.test(roc_hc_dementia, roc_adjusted_dementia, method = "delong") #adjust better
-roc.test(roc_hc_mci, roc_adjusted_mci, method = "delong") #adjust better
-
+compute_roc_metrics(ROC_model = roc_any_no)
 
 roc.test(roc_any_no, imputed_roc_any_no, method = "delong") #NS
-roc.test(roc_hc_dementia, imputed_roc_hc_dementia, method = "delong") #NS
-roc.test(roc_hc_mci, imputed_roc_hc_mci, method = "delong") #NS
-
-roc.test(roc_any_no, model_rudas_any_no, method = "delong") #mce better
-roc.test(roc_hc_dementia, model_rudas_HC_dementia, method = "delong") #mce better
-roc.test(roc_hc_mci, model_rudas_HC_mci, method = "delong") #NS (prob bc small sample size)
 ```
-
-
-# divided by ethnicity (using adjusted MCE)
+# Supplementary Table 7. Subanalysis excluding participants when MCE was part of clinical evaluation
 ```{r}
-minority <- subset(MCE_noNA, Minority_majority == "Minority")
-majority <- subset(MCE_noNA, Minority_majority == "Majority")
-
-roc_minority <- roc(minority$any_no_impairment, minority$adjusted_mce, 
-                  ci = TRUE,
-                  legacy.axes=TRUE,
-                  lwd = 4,
-                  levels=c("No_impairment", "Any_impairment"))
-roc_majority <- roc(majority$any_no_impairment, majority$adjusted_mce, 
-                  ci = TRUE,
-                  legacy.axes=TRUE,
-                  lwd = 4,
-                  levels=c("No_impairment", "Any_impairment"))
-
-compute_roc_metrics(ROC_model = roc_minority)
-compute_roc_metrics(ROC_model = roc_majority)
-roc.test(roc_minority, roc_majority, method = "delong")
-```
-
-
-#See each individual cutoff
-```{r}
-library(ggplot2)
-library(arsenal)
-#uncorrected for age and education HC vs. dementia is 70
-MCE$rune_cutoff <- ifelse(MCE$mce_normal >= 70, "Healthy", "Impaired")
-MCE$dementiacutoff <- ifelse(MCE$mce_normal >= 73, "Healthy", "Impaired")
-MCE$mcicutoff <- ifelse(MCE$mce_normal >= 83, "Healthy", "Impaired")
-
-table(MCE$rune_cutoff, MCE$Cogn_status)
-table(MCE$dementiacutoff, MCE$Cogn_status)
-table(MCE$mcicutoff, MCE$Cogn_status)
-
-ggplot(MCE, aes(Years_of_school, mce_normal, color = Cogn_status)) + 
-  geom_point(size = 3) + 
-  geom_hline(yintercept = 70, linetype = "dashed") + 
-    geom_hline(yintercept = 73, linetype = "dashed", color = "red")
-
-ggplot(MCE, aes(Years_of_school, mce_normal, color = any_no_impairment)) + 
-  geom_point(size = 3) + 
-    geom_hline(yintercept = 73, linetype = "dashed", color = "red")
-
-table(MCE$mce_normal>=68, MCE$any_no_impairment)
-table(MCE$mce_normal>=69, MCE$any_no_impairment)
-table(MCE$mce_normal>=70, MCE$any_no_impairment)
-table(MCE$mce_normal>=71, MCE$any_no_impairment)
-table(MCE$mce_normal>=72, MCE$any_no_impairment)
-table(MCE$mce_normal>=73, MCE$any_no_impairment)
-table(MCE$mce_normal>=74, MCE$any_no_impairment)
-table(MCE$mce_normal>=75, MCE$any_no_impairment)
-table(MCE$mce_normal>=76, MCE$any_no_impairment)
-table(MCE$mce_normal>=77, MCE$any_no_impairment)
-table(MCE$mce_normal>=78, MCE$any_no_impairment)
-table(MCE$mce_normal>=79, MCE$any_no_impairment)
-table(MCE$mce_normal>=80, MCE$any_no_impairment)
-table(MCE$mce_normal>=81, MCE$any_no_impairment)
-table(MCE$mce_normal>=82, MCE$any_no_impairment)
-table(MCE$mce_normal>=83, MCE$any_no_impairment)
-table(MCE$mce_normal>=84, MCE$any_no_impairment)
-table(MCE$mce_normal>=85, MCE$any_no_impairment)
-table(MCE$mce_normal>=86, MCE$any_no_impairment)
-
-table(MCE$mce_normal>=68, MCE$Cogn_status)
-table(MCE$mce_normal>=69, MCE$Cogn_status)
-table(MCE$mce_normal>=70, MCE$Cogn_status)
-table(MCE$mce_normal>=71, MCE$Cogn_status)
-table(MCE$mce_normal>=72, MCE$Cogn_status)
-table(MCE$mce_normal>=73, MCE$Cogn_status)
-table(MCE$mce_normal>=74, MCE$Cogn_status)
-table(MCE$mce_normal>=75, MCE$Cogn_status)
-table(MCE$mce_normal>=76, MCE$Cogn_status)
-table(MCE$mce_normal>=77, MCE$Cogn_status)
-table(MCE$mce_normal>=78, MCE$Cogn_status)
-table(MCE$mce_normal>=79, MCE$Cogn_status)
-table(MCE$mce_normal>=80, MCE$Cogn_status)
-table(MCE$mce_normal>=81, MCE$Cogn_status)
-table(MCE$mce_normal>=82, MCE$Cogn_status)
-table(MCE$mce_normal>=83, MCE$Cogn_status)
-table(MCE$mce_normal>=84, MCE$Cogn_status)
-table(MCE$mce_normal>=85, MCE$Cogn_status)
-table(MCE$mce_normal>=86, MCE$Cogn_status)
-
-
-
-```
-
-
-#MCI subanalysis
-```{r}
-library(MatchIt)
-library(caret)
-MCE_MCI_match <- MCE[!is.na(MCE$Age), ]
-MCE_MCI_match <- MCE_MCI_match[!is.na(MCE_MCI_match$Years_of_school), ]
-MCE_MCI_match <- MCE_MCI_match[!is.na(MCE_MCI_match$mce_normal), ]  
-
-HC_mci_for_matching <- subset(MCE_MCI_match, Cogn_status=="Cognitively_intact" | Cogn_status=="MCI")
-  HC_mci_for_matching$Cogn_status <- droplevels(HC_mci_for_matching$Cogn_status)
-
-m.out <- matchit(Cogn_status ~ Age, data = HC_mci_for_matching, method = "nearest", caliper = 0.2)
-  matched_HC_mci <- match.data(m.out)
-
-summary(tableby(Cogn_status~ Age + Gender + Years_of_school + Minority_majority, data=matched_HC_mci,
-                numeric.stats=c("N", "mean", "sd", "median", "q1q3")))
-
-
-roc_MCI <- roc(matched_HC_mci$Cogn_status, matched_HC_mci$mce_normal, 
-                  ci = TRUE,
-                  legacy.axes=TRUE,
-                  lwd = 4,
-                  levels=c("Cognitively_intact", "MCI"))
-roc_MCI_adjusted <- roc(matched_HC_mci$Cogn_status, matched_HC_mci$adjusted_mce, 
-                  ci = TRUE,
-                  legacy.axes=TRUE,
-                  lwd = 4,
-                  levels=c("Cognitively_intact", "MCI"))
-
-compute_roc_metrics(ROC_model = roc_MCI)
-compute_roc_metrics(ROC_model = roc_MCI_adjusted)
-
-roc.test(roc_MCI, roc_MCI_adjusted, method = "delong") #adjusted better
-```
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-# Normative data (preparation and simple version)
-```{r}
-Normative <- cognitively_intact
-  Normative <- Normative[!is.na(Normative$Years_of_school), ]
-  Normative <- Normative[!is.na(Normative$mce_normal), ]
-  Normative <- Normative[!is.na(Normative$Age), ]
-
-
-#create age brackets
-Normative$Age_Group <- cut(Normative$Age, 
-                           breaks = c(17, 29, 39, 49, 59, 69, 79, 91), 
-                           labels = c('18-29', '30-39', '40-49', '50-59', '60-69', '70-79', '80-90'), 
-                           right = TRUE, 
-                           include.lowest = TRUE)
-Normative$Education_group <- cut(Normative$Years_of_school, 
-                           breaks = c(0, 3, 8, 12, 18), 
-                           labels = c('Low', 'Medium', 'High', 'Very high'), 
-                           right = TRUE, 
-                           include.lowest = TRUE,
-                           ordered = TRUE)
-
-#Background
-hist(Normative$mce_normal) #non-normal (right skewed)
-hist(Normative$Age) #normal
-hist(Normative$Years_of_school) #non-normal (flat)
-
-summary(tableby( ~ Age + Gender + Years_of_school + mce_normal + Age_Group, data=Normative, 
-                numeric.stats=c("N", "median", "q1q3", "mean", "sd", "range")))
-
-# Mutlivariate linear regression
-model_full_MCE <- lm(mce_normal ~ Age + Gender + Years_of_school + Minority_majority, data = Normative)
-  summary(model_full_MCE) #select age and education
-model_lm_normative <- lm(mce_normal ~ Years_of_school + Age, data = Normative)
-  summary(model_lm_normative)
-
-ggplot(Normative, aes(Years_of_school, mce_normal)) + 
-  geom_jitter(col = "green4") +
-  geom_smooth(method = "loess")
-ggplot(Normative, aes(Age, mce_normal)) + 
-  geom_jitter(col = "green4") +
-  geom_smooth(method = "loess")
-
-#Create percentiles by group
-percentile_summary <- Normative %>%
-  group_by(Age_Group, Education_group) %>%
-  summarise(
-    N = n(),
-    P5 = quantile(mce_normal, 0.05, na.rm = TRUE),
-    P10 = quantile(mce_normal, 0.10, na.rm = TRUE),
-    P25 = quantile(mce_normal, 0.25, na.rm = TRUE),
-    P50 = quantile(mce_normal, 0.50, na.rm = TRUE),
-    P75 = quantile(mce_normal, 0.75, na.rm = TRUE),
-    P90 = quantile(mce_normal, 0.90, na.rm = TRUE),
-    P95 = quantile(mce_normal, 0.95, na.rm = TRUE),
-
-    .groups = 'drop'
-  )
-print(percentile_summary)
-
-
-# Convert percentile_summary to long format for easier plotting
-library(tidyr)
-percentile_long <- percentile_summary %>%
-  pivot_longer(cols = starts_with("P"), names_to = "Percentile", values_to = "Value")
-
-# Plot percentiles
-ggplot(percentile_long, aes(x = Age_Group, y = Value, color = Percentile)) +
-  geom_line(aes(group = Percentile)) +
-  facet_wrap(~ Education_group) +
-  labs(title = "Percentiles of mce_normal by Age and Years of Schooling Groups",
-       x = "Age Group",
-       y = "mce_normal Score") +
-  theme_minimal()
-
-#Make automatic table
-library(gt)
-percentile_summary %>%
-  select(Age_Group, Education_group, N, P5, P10, P25, P50, P75, P90, P95) %>%
-  gt() %>%
-  tab_header(title = "Percentile Predictions of MCE Scores",
-             subtitle = "Across Age Groups and Education Levels") %>%
-  fmt_number(columns = vars(P5, P10, P25, P50, P75, P90, P95), decimals = 2)
-
-```
-
-
-
-
-#Quantile regression normative data
-```{r}
-library(gt)
-library(ggplot2)
-library(dplyr)
-library(tidyr)
-library(stringr)
-
-#Descriptives for table
-summary(tableby( ~ mce_normal + RPT_learning + RPT_recall + RPT_recognition_total + CRT + Fluence_supermarket, data=Normative, 
-                numeric.stats=c("N", "mean", "median", "sd")))
-
-#Ceiling effect per test
-table(Normative$mce_normal) #10
-  (10/915)*100 #1.1%
-table(Normative$RPT_learning) #70
-  (70/915)*100 #7.65%
-table(Normative$RPT_recall) #275
-  (275/915)*100 #30.05%
-table(Normative$RPT_recognition_total) #849
-  (849/915)*100 #92.78%
-table(Normative$CRT) #523
-  (523/915)*100 #57.15%
-table(Normative$Fluence_supermarket) #225
-  (225/915)*100 #24.59%
-
-
-#Quantile regression because conditions of linear regression are not met
-library(quantreg)
-fit <- rq(mce_normal ~ Age + Years_of_school, tau = c(0.05, 0.10, 0.25, 0.50, 0.75, 0.90, 0.95), data = Normative)
-fit$coefficients
-
-
-# Regression coefficients from quantile regression
-coefficients <- data.frame(
-  Quantile = c(0.05, 0.10, 0.25, 0.50, 0.75, 0.90, 0.95),
-  Intercept = c(76.137255, 79.5159915, 83.6969697, 88.9815668, 93.4424779, 98.1111111, 98.62162162),
-  Age = c(-0.254902, -0.2324094, -0.2060606, -0.1843318, -0.1504425, -0.1111111, -0.09459459),
-  Years_of_school = c(1.072664, 0.9829424, 0.9939394, 0.8294931, 0.6371681, 0.3333333, 0.29729730)
-)
-
-# Define age and education ranges
-age_ranges <- list("18-29" = c(18, 29),
-                   "30-39" = c(30, 39),
-                   "40-49" = c(40, 49),
-                   "50-59" = c(50, 59),
-                   "60-69" = c(60, 69),
-                   "70-79" = c(70, 79),
-                   "80-99" = c(80, 99))
-
-edu_ranges <- list("0-3" = c(0, 3),
-                   "4-7" = c(4, 7),
-                   "8-12" = c(8, 12),
-                   "13-17" = c(13, 17))
-
-# Function to calculate expected score
-calculate_score <- function(intercept, age_coef, edu_coef, age, edu) {
-  intercept + (age_coef * age) + (edu_coef * edu)
-}
-
-# Initialize an empty list to store results
-results <- list()
-
-# Loop over each quantile, age range, and education range
-for (q in 1:nrow(coefficients)) {
-  quantile_label <- coefficients$Quantile[q]
-  intercept <- coefficients$Intercept[q]
-  age_coef <- coefficients$Age[q]
-  edu_coef <- coefficients$Years_of_school[q]
+#Netherlands + TIMING (DK and Netherlands)
+reduced_MCE_noNA <- subset(MCE_noNA, Country != "Denmark_TIMING")
+  reduced_MCE_noNA <- subset(reduced_MCE_noNA, Country != "Holland_TIMING")
+  reduced_MCE_noNA <- subset(reduced_MCE_noNA, Country != "Holland")
+  reduced_MCE_noNA <- subset(reduced_MCE_noNA, any_no_impairment != "Affective")
+  reduced_MCE_noNA$any_no_impairment <- droplevels(reduced_MCE_noNA$any_no_impairment)
   
-  for (age_label in names(age_ranges)) {
-    age_min <- age_ranges[[age_label]][1]
-    age_max <- age_ranges[[age_label]][2]
-    
-    for (edu_label in names(edu_ranges)) {
-      edu_min <- edu_ranges[[edu_label]][1]
-      edu_max <- edu_ranges[[edu_label]][2]
-      
-      # Calculate expected scores for min and max of ranges
-      score_min <- calculate_score(intercept, age_coef, edu_coef, age_max, edu_min)  # Younger age, lower education
-      score_max <- calculate_score(intercept, age_coef, edu_coef, age_min, edu_max)  # Older age, higher education
-      
-      # Store the result
-      results[[length(results) + 1]] <- data.frame(
-        Quantile = quantile_label,
-        Age_Range = age_label,
-        Education_Range = edu_label,
-        Expected_Score_Range = paste0("[", round(score_min, 2), "-", round(score_max, 2), "]")
-      )
-    }
-  }
-}
+roc_reduced_MCE_noNA <- roc(reduced_MCE_noNA$any_no_impairment, reduced_MCE_noNA$mce_normal, 
+                  ci = TRUE,
+                  legacy.axes=TRUE,
+                  lwd = 4,
+                  levels=c("No_impairment", "Any_impairment"))  
 
-# Combine all results into a single dataframe
-results_df <- do.call(rbind, results)
-
-
-# Calculate N (sample size) per Age and Education range
-counts <- Normative %>%
-  mutate(
-    Age_Range = cut(Age, breaks = c(18, 29, 39, 49, 59, 69, 79, 99),
-                    labels = c("18-29", "30-39", "40-49", "50-59", "60-69", "70-79", "80-99")),
-    Education_Range = cut(Years_of_school, breaks = c(-1, 3, 7, 12, 17),
-                          labels = c("0-3", "4-7", "8-12", "13-17"))
-  ) %>%
-  group_by(Age_Range, Education_Range) %>%
-  summarise(N = n(), .groups = 'drop')
-
-# Merge sample size (N) with results_df
-results_with_n <- results_df %>%
-  left_join(counts, by = c("Age_Range", "Education_Range"))
-
-# Reshape the data to wide format
-results_wide <- results_with_n %>%
-  pivot_wider(names_from = Quantile, values_from = Expected_Score_Range, names_prefix = "P")
-
-# Display the table with N
-results_wide %>%
-  gt() %>%
-  tab_header(
-    title = "Normative data of the MCE (Quantile regression)"
-  ) %>%
-  fmt_number(
-    columns = c(P0.05, P0.1, P0.25, P0.5, P0.75, P0.9, P0.95),
-    decimals = 2
-  ) %>%
-  cols_label(N = "N")
-
-
-# Extract lower and upper bounds from Expected_Score_Range
-results_long <- results_wide %>%
-  pivot_longer(cols = starts_with("P"), names_to = "Quantile", values_to = "Expected_Score_Range") %>%
-  mutate(
-    Lower_Bound = pmax(0, as.numeric(str_extract(Expected_Score_Range, "(?<=\\[)\\d+\\.?\\d*"))),
-    Upper_Bound = pmin(100, as.numeric(str_extract(Expected_Score_Range, "\\d+\\.?\\d*(?=\\])")))
-  )
-
-# Plot with shaded areas (ribbons) representing the range
-ggplot(results_long, aes(x = Age_Range, group = Quantile, fill = Quantile)) +
-  geom_ribbon(aes(ymin = Lower_Bound, ymax = Upper_Bound), alpha = 0.3) +  # Shaded area between bounds
-  geom_line(aes(y = Lower_Bound, color = Quantile), linetype = "dashed") +  # Optional: dashed lines for lower bounds
-  geom_line(aes(y = Upper_Bound, color = Quantile), linetype = "dashed") +  # Optional: dashed lines for upper bounds
-  facet_wrap(~ Education_Range) +
-  scale_y_continuous(limits = c(0, 100)) +
-  labs(title = "Quantile Regression Predictions with Shaded Ranges",
-       x = "Age Group",
-       y = "Predicted Score") +
-  theme_minimal() +
-  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+compute_roc_metrics(ROC_model = roc_reduced_MCE_noNA)
+compute_roc_metrics(ROC_model = roc_any_no)
+roc.test(roc_reduced_MCE_noNA, roc_any_no, method = "delong")
 ```
 
 
@@ -1006,237 +1068,209 @@ ggplot(results_long, aes(x = Age_Range, group = Quantile, fill = Quantile)) +
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-## ACCURACY
-# K-fold logistic regression (no impairment vs. any impairment)
+# IDENTIFY DEMENTIA SUBTYPES
 ```{r}
-#Remove affective
-MCE <- subset(MCE, Cogn_status!="Affective")
-MCE$any_no_impairment <- fct_collapse(MCE$Cogn_status, No_impairment = c("Cognitively_intact")) #not include affective
-  MCE$any_no_impairment <- fct_collapse(MCE$any_no_impairment, Any_impairment = c("MCI", "Dementia"))
-  MCE$any_no_impairment[MCE$any_no_impairment == "Affective"] <- NA #remove affective
-  MCE$any_no_impairment <- droplevels(MCE$any_no_impairment)
+MCE["Fluence_food"][MCE["Fluence_food"] > 28.5] <- 28
+MCE["Fluence_animals"][MCE["Fluence_animals"] > 28.5] <- 28
+MCE_syndromes <- MCE %>%
+  mutate(any_fluency = coalesce(Fluence_supermarket, Fluence_food, Fluence_animals))
 
-MCE_noNA <- MCE[!is.na(MCE$Years_of_school), ]
-MCE_noNA <- MCE_noNA[!is.na(MCE_noNA$mce_normal), ]  
-MCE_noNA <- MCE_noNA[!is.na(MCE_noNA$Age), ]
-MCE_noNA <- MCE_noNA[!is.na(MCE_noNA$any_no_impairment), ] #remove affective
-MCE_noNA <- subset(MCE_noNA, Age >= 65) #remove younger than 65
+#Clean data
+MCE_syndromes <- subset(MCE_syndromes, Age >= 65) #remove younger than 65
 
+MCE_syndromes <- MCE_syndromes %>%
+  mutate(
+    syndromes = case_when(
+      Cogn_status == "Cognitively_intact" ~ "Healthy",
+      Cogn_status == "Affective" | Diagnosis == "Affective" | Diagnosis == "Depression" | Diagnosis == "Psychosis" ~ "Affectives",
+      Cogn_status == "MCI" ~ "Mild_impairment",
+      Cogn_status == "Dementia" & Diagnosis == "AD" ~ "AD",
+      Cogn_status == "Dementia" & Diagnosis == "Mix AD_VaD" | Diagnosis == "Mixed_AD_VaD" ~ "Mixed",
+      Cogn_status == "Dementia" & Diagnosis == "VaD" |Diagnosis == "bvFTD" |Diagnosis == "FTD" |Diagnosis == "DLB/PDD" |Diagnosis == "PDD"
+        |Diagnosis == "DLB" |Diagnosis == "PD" |Diagnosis == "Gerstmann-Sträussler-Scheinker disease" |Diagnosis == "TBI" |Diagnosis == "NPH"
+        |Diagnosis == "PSP"|Diagnosis == "Stroke" |Diagnosis == "Other specified dementia" ~ "Non_AD",
+                            TRUE ~ "Review"))
+MCE_syndromes$syndromes <- as.factor(MCE_syndromes$syndromes)
+MCE_syndromes <- subset(MCE_syndromes, syndromes!= "Review")
+MCE_syndromes$syndromes <- droplevels(MCE_syndromes$syndromes)
 
-HC_dementia <- subset(MCE_noNA, Cogn_status=="Cognitively_intact" | Cogn_status=="Dementia")
-  HC_dementia$Cogn_status <- droplevels(HC_dementia$Cogn_status)
-HC_mci <- subset(MCE_noNA, Cogn_status=="Cognitively_intact" | Cogn_status=="MCI")
-  HC_mci$Cogn_status <- droplevels(HC_mci$Cogn_status)
+MCE_syndromes$ratio_memory <- (MCE_syndromes$RPT_recall+1)/(MCE_syndromes$RPT_recognition_total+1)
+MCE_syndromes$ratio_fluency_memory <- (MCE_syndromes$any_fluency)/(MCE_syndromes$RPT_recall+MCE_syndromes$RPT_learning+MCE_syndromes$RPT_recognition_total)
 
-#ROC k-fold
-library(caret)
-set.seed(123)
-ctrl_10 <- trainControl(
-                     method="cv", 
-                     number = 10, 
-                     summaryFunction=twoClassSummary, 
-                     classProbs=TRUE,
-                     savePredictions = TRUE)
-model_glm_k_fold_any_no <- train(any_no_impairment ~ mce_normal + Age + Years_of_school,
-               data = MCE_noNA, 
-               method = "glm", 
-               family = binomial(), 
-               metric = "ROC",
-               trControl = ctrl_10)
-model_glm_k_fold_HC_dementia <- train(Cogn_status ~ mce_normal + Age + Years_of_school,
-               data = HC_dementia, 
-               method = "glm", 
-               family = binomial(), 
-               metric = "ROC",
-               trControl = ctrl_10)
-model_glm_k_fold_HC_mci <- train(Cogn_status ~ mce_normal + Age + Years_of_school,
-               data = HC_mci, 
-               method = "glm", 
-               family = binomial(), 
-               metric = "ROC",
-               trControl = ctrl_10)
+table(MCE_syndromes$syndromes) #Affective = 82; MCI = 141, AD = 191, Mixed = 44, Non_AD = 58
 
-print(model_glm_k_fold_any_no,showSD=T)
-print(model_glm_k_fold_HC_dementia,showSD=T)
-print(model_glm_k_fold_HC_mci,showSD=T)
+# mean scores for each group
+test_vars <- c("RUDAS", "RPT_learning", "RPT_recall", "RPT_recognition_total", "CRT", "any_fluency")
 
-roc_object_k_fold_any_no <- roc(
-                 response = model_glm_k_fold_any_no$pred$obs, 
-                 predictor = model_glm_k_fold_any_no$pred$Any_impairment,
-                 levels = rev(levels(model_glm_k_fold_any_no$pred$obs)))
-roc_object_k_fold_HC_dementia <- roc(
-                 response = model_glm_k_fold_HC_dementia$pred$obs, 
-                 predictor = model_glm_k_fold_HC_dementia$pred$Dementia,
-                 levels = rev(levels(model_glm_k_fold_HC_dementia$pred$obs)))
-roc_object_k_fold_HC_mci <- roc(
-                 response = model_glm_k_fold_HC_mci$pred$obs, 
-                 predictor = model_glm_k_fold_HC_mci$pred$MCI,
-                 levels = rev(levels(model_glm_k_fold_HC_mci$pred$obs)))
-################################
-library(tidyverse)
-aucci<-function(x) {
-  auc<-auc(x)
-  ci<- ci.auc(x)
-  plot(x, main = "ROC Curve", print.auc = TRUE)
-  return(list(AUC = auc, CI = ci))
-}
-
-process_roc <- function(roc_obj) {
-  data.frame(
-    FPR = 1 - roc_obj$specificities,
-    TPR = roc_obj$sensitivities
-  ) %>%
-    unique() %>%
-    arrange(FPR, TPR)
-}
-
-###########################
-options(scipen = 999)
-
-roc_mce_data_any_no <- process_roc(roc_object_k_fold_any_no)
-roc_mce_data_HC_dementia <- process_roc(roc_object_k_fold_HC_dementia)
-roc_mce_data_HC_mci <- process_roc(roc_object_k_fold_HC_mci)
-
-auc_mce_any_no<-auc(roc_object_k_fold_any_no)
-auc_mce_HC_dementia<-auc(roc_object_k_fold_HC_dementia)
-auc_mce_HC_mci<-auc(roc_object_k_fold_HC_mci)
-
-roc_clinical_data<-rbind(
-  data.frame(FPR = 100*roc_mce_data_any_no$FPR, TPR = 100*roc_mce_data_any_no$TPR, Model = "Any_no model"),
-  data.frame(FPR = 100*roc_mce_data_HC_dementia$FPR, TPR = 100*roc_mce_data_HC_dementia$TPR, Model = "HC_dementia model"),
-  data.frame(FPR = 100*roc_mce_data_HC_mci$FPR, TPR = 100*roc_mce_data_HC_mci$TPR, Model = "HC_mci model")
-)
-
-roc_clinical_data$Model <- factor(roc_clinical_data$Model, levels = c(
-                                                      "Any_no model",
-                                                      "HC_dementia model",
-                                                      "HC_mci model"))
-
-AUC_clinical_plot<-ggplot(roc_clinical_data, aes(x = FPR, y = TPR, color = Model)) +
-  geom_step(linewidth = 1.2) +
-  geom_abline(slope = 1, intercept = 0, linetype = "dotted", color = "black", size = 0.8) +
-  scale_color_manual(values = c("Any_no model" = "#999999",
-                                "HC_dementia model" = "#E69F00",
-                                "HC_mci model" = "#56B4E9"),
-                     labels = c("Any_no model: p-tau217",
-                                "HC_dementia model: X",
-                                "HC_mci model: X")) +
-  theme_classic() +
-  theme(
-    plot.title = element_text(family = "serif", size = 20, face = "bold", hjust = 0.5),
-    axis.title.x = element_text(family = "serif", size = 14),
-    axis.title.y = element_text(family = "serif", size = 14)) +
-  labs(title = "AUROC: Full cohort [10-fold]", x = "100-Specificity", y = "Sensitivity") +
-    theme(legend.position = "bottom", legend.title = element_blank(), legend.box = "horizontal", legend.text = element_text(size=12)) +
-  guides(color = guide_legend(nrow=2)) +
-    annotate("segment", x = 40, xend = 43, y = 55, yend = 55, color = "#999999", size = 2) +
-  annotate("text", x = 45, y = 55, label = sprintf("Any_no model: AUC: %.3f (SD: 0.026)", auc_mce_any_no), color = "black", hjust = 0, family = "serif", size = 7) +
-    annotate("segment", x = 40, xend = 43, y = 45, yend = 45, color = "#E69F00", size = 2) +
-  annotate("text", x = 45, y = 45, label = sprintf("HC_dementia model: AUC: %.3f (SD: 0.019)",auc_mce_HC_dementia), color = "black", hjust = 0,  family = "serif", size = 7) +
-    annotate("segment", x = 40, xend = 43, y = 35, yend = 35, color = "#56B4E9", size = 2) +
-  annotate("text", x = 45, y = 35, label = sprintf("HC_mci model: AUC: %.3f (SD: 0.097)",auc_mce_HC_mci), color = "black", hjust = 0,  family = "serif", size = 7)
-
-AUC_clinical_plot
+data_summary <- MCE_syndromes %>%
+  group_by(syndromes) %>%
+  summarise(
+    across(all_of(test_vars), list(mean = ~mean(.x, na.rm = TRUE),
+                                   sd = ~sd(.x, na.rm = TRUE)),
+           .names = "{.col}§{.fn}"),  .groups = "drop")
 
 
 
-any_no_matrix <- confusionMatrix(model_glm_k_fold_any_no$pred$pred, model_glm_k_fold_any_no$pred$obs, positive = "Any_impairment")
-HC_dementia_matrix <- confusionMatrix(model_glm_k_fold_HC_dementia$pred$pred, model_glm_k_fold_HC_dementia$pred$obs, positive = "Dementia")
-HC_MCI_matrix <- confusionMatrix(model_glm_k_fold_HC_mci$pred$pred, model_glm_k_fold_HC_mci$pred$obs, positive = "MCI")
+#lets look at differences between AD vs. non AD and MCI vs. affective
+AD_nonAD <- subset(MCE_syndromes, syndromes =="AD" | syndromes=="Non_AD")
+  AD_nonAD$syndromes <- droplevels(AD_nonAD$syndromes)
+  
+MCI_affective <- subset(MCE_syndromes, syndromes =="Affectives" | syndromes=="Mild_impairment")
+  MCI_affective$syndromes <- droplevels(MCI_affective$syndromes)
 
-print(any_no_matrix)
-print(HC_dementia_matrix)
-print(HC_MCI_matrix)
+Table_AD_nonAD <-
+  tbl_summary(
+    AD_nonAD,
+    include = c(Age, Years_of_school, RUDAS, RPT_learning, RPT_recall, RPT_recognition_total, CRT, any_fluency),
+    by = syndromes, 
+    type = list(RPT_learning ~ "continuous"),
+    statistic = list(all_continuous() ~ "{median} [{p25}, {p75}]"), 
+    digits = list(all_continuous() ~ 1),
+    missing = "no" # don't list missing data separately
+  ) |> 
+  add_p() |> # test for a difference between groups
+  modify_header(label = "") |> # update the column header
+  bold_labels()
+
+Table_AD_nonAD
+
+cohen.d(AD_nonAD$Age, AD_nonAD$syndromes) 
+cohen.d(AD_nonAD$Years_of_school, AD_nonAD$syndromes) 
+cohen.d(AD_nonAD$RUDAS, AD_nonAD$syndromes) 
+cohen.d(AD_nonAD$RPT_learning, AD_nonAD$syndromes) 
+cohen.d(AD_nonAD$RPT_recall, AD_nonAD$syndromes) 
+cohen.d(AD_nonAD$RPT_recognition_total, AD_nonAD$syndromes) 
+cohen.d(AD_nonAD$CRT, AD_nonAD$syndromes) 
+cohen.d(AD_nonAD$Fluence_supermarket, AD_nonAD$syndromes) 
+
+
+
+
+Table_mic_affective <-
+  tbl_summary(
+    MCI_affective,
+    include = c(Age, Years_of_school, RUDAS, RPT_learning, RPT_recall, RPT_recognition_total, CRT, any_fluency,
+                ratio_memory, ratio_fluency_memory),
+    by = syndromes, 
+    type = list(RPT_learning ~ "continuous"),
+    statistic = list(all_continuous() ~ "{median} [{p25}, {p75}]"), 
+    digits = list(all_continuous() ~ 1),
+    missing = "no" # don't list missing data separately
+  ) |> 
+  add_p() |> # test for a difference between groups
+  modify_header(label = "") |> # update the column header
+  bold_labels()
+
+Table_mic_affective
+
+cohen.d(MCI_affective$Age, MCI_affective$syndromes) 
+cohen.d(MCI_affective$Years_of_school, MCI_affective$syndromes) 
+cohen.d(MCI_affective$RUDAS, MCI_affective$syndromes) 
+cohen.d(MCI_affective$RPT_learning, MCI_affective$syndromes) 
+cohen.d(MCI_affective$RPT_recall, MCI_affective$syndromes) 
+cohen.d(MCI_affective$RPT_recognition_total, MCI_affective$syndromes) 
+cohen.d(MCI_affective$CRT, MCI_affective$syndromes) 
+cohen.d(MCI_affective$Fluence_supermarket, MCI_affective$syndromes) 
+cohen.d(MCI_affective$ratio_fluency_memory, MCI_affective$syndromes) 
+
 ```
 
-# Subanalysis matching on age
 ```{r}
-library(MatchIt)
-MCE_for_Matching <- MCE[!is.na(MCE$Age), ]
-MCE_for_Matching <- MCE_for_Matching[!is.na(MCE_for_Matching$Years_of_school), ]
-MCE_for_Matching <- MCE_for_Matching[!is.na(MCE_for_Matching$mce_normal), ]  
-MCE_for_Matching <- MCE_for_Matching[!is.na(MCE_for_Matching$any_no_impairment), ]  
+#AD non-AD
+AD_nonAD$ratio_fluency_memory_full <- AD_nonAD$any_fluency/(AD_nonAD$RPT_learning+AD_nonAD$RPT_recall+AD_nonAD$RPT_recognition_total)
+
+library(cutpointr)
+cutpointr(AD_nonAD, RPT_recall, syndromes, method = maximize_metric, metric = sum_sens_spec, na.rm = TRUE, direction = "<=", pos_class = "AD", neg_class = "Non_AD")
+detach("package:cutpointr", unload=TRUE)
 
 
-HC_dementia_for_matching <- subset(MCE_for_Matching, Cogn_status=="Cognitively_intact" | Cogn_status=="Dementia")
-    HC_dementia_for_matching$Cogn_status <- droplevels(HC_dementia_for_matching$Cogn_status)
-HC_mci_for_matching <- subset(MCE_for_Matching, Cogn_status=="Cognitively_intact" | Cogn_status=="MCI")
-  HC_mci_for_matching$Cogn_status <- droplevels(HC_mci_for_matching$Cogn_status)
+ggplot(AD_nonAD, aes(syndromes, RPT_recall)) +
+    geom_violin(fill = "grey90") +
+      geom_hline(yintercept = 1.5, linetype = "dashed", color = "red3", linewidth = 1) +
+  geom_jitter(aes(color=syndromes),alpha = 0.5, size = 2, position = position_jitter(width = 0.2, height = 0.2)) +
+    theme_classic()
 
-m.out1 <- matchit(any_no_impairment ~ Age, data = MCE_for_Matching,  method = "nearest", caliper = 0.2)
-  matched_data <- match.data(m.out1)
-  matched_data <- subset(matched_data, Cogn_status!="Affective")#no affective
-m.out2 <- matchit(Cogn_status ~ Age, data = HC_dementia_for_matching,  method = "nearest", caliper = 0.2)
-  matched_HC_dementia <- match.data(m.out2)
-m.out3 <- matchit(any_no_impairment ~ Age, data = HC_mci_for_matching, method = "nearest", caliper = 0.2)
-  matched_HC_mci <- match.data(m.out3)
+AD_nonAD$cutoff_ADnonAD <- cut(AD_nonAD$RPT_recall,
+                               breaks=c(-Inf,1,10),
+                               labels=c('Memory_impaired', 'Unimpaired_memory'))
 
-summary(tableby(any_no_impairment~ Age + Gender + Years_of_school + Minority_majority, data=matched_data,
-                numeric.stats=c("N", "mean", "sd")))
-summary(tableby(Cogn_status~ Age + Gender + Years_of_school + Minority_majority, data=matched_HC_dementia,
-                numeric.stats=c("N", "mean", "sd")))
-summary(tableby(Cogn_status~ Age + Gender + Years_of_school + Minority_majority, data=matched_HC_mci,
-                numeric.stats=c("N", "mean", "sd")))
+table(AD_nonAD$cutoff_ADnonAD, AD_nonAD$syndromes)
 
-library(caret)
-set.seed(123)
-ctrl_5 <- trainControl(
-                     method="cv", 
-                     number = 5, 
-                     summaryFunction=twoClassSummary, 
-                     classProbs=TRUE,
-                     savePredictions = TRUE)
-model_matched_any_no <- train(any_no_impairment ~ mce_normal + Age + Years_of_school,
-               data = matched_data, 
-               method = "glm", 
-               family = binomial(), 
-               metric = "ROC",
-               trControl = ctrl_5)
-model_matched_HC_dementia <- train(Cogn_status ~ mce_normal + Age + Years_of_school,
-               data = matched_HC_dementia, 
-               method = "glm", 
-               family = binomial(), 
-               metric = "ROC",
-               trControl = ctrl_5)
-model_matched_HC_mci <- train(Cogn_status ~ mce_normal + Age + Years_of_school,
-               data = matched_HC_mci, 
-               method = "glm", 
-               family = binomial(), 
-               metric = "ROC",
-               trControl = ctrl_5)
+step1 <- subset(AD_nonAD, cutoff_ADnonAD == "Unimpaired_memory")
 
-print(model_matched_any_no, showSD=TRUE)
-print(model_matched_HC_dementia, showSD=TRUE)
-print(model_matched_HC_mci, showSD=TRUE)
+tbl_summary(
+    step1,
+    include = c(Age, Years_of_school, RUDAS, RPT_learning, RPT_recall, RPT_recognition_total, CRT, any_fluency,
+                ratio_memory,ratio_fluency_memory_full),
+    by = syndromes, 
+    type = list(RPT_learning ~ "continuous"),
+    statistic = list(all_continuous() ~ "{median} [{p25}, {p75}]"), 
+    digits = list(all_continuous() ~ 1),
+    missing = "no" # don't list missing data separately
+  ) |> 
+  add_p() |> # test for a difference between groups
+  modify_header(label = "") 
 
-Matched_matrix <- confusionMatrix(model_matched_any_no$pred$pred, model_matched_any_no$pred$obs, positive = "Any_impairment")
-Matched_matrix_HC_dementia <- confusionMatrix(model_matched_HC_dementia$pred$pred, model_matched_HC_dementia$pred$obs, positive = "Dementia")
-Matched_matrix_HC_mci <- confusionMatrix(model_matched_HC_mci$pred$pred, model_matched_HC_mci$pred$obs, positive = "MCI")
 
-print(Matched_matrix)
-print(Matched_matrix_HC_dementia)
-print(Matched_matrix_HC_mci)
 
+#MCI affective
+MCI_affective$ratio_fluency_memory_full <- MCI_affective$any_fluency/(MCI_affective$RPT_learning+MCI_affective$RPT_recall+MCI_affective$RPT_recognition_total)
+
+ggplot(MCI_affective, aes(syndromes, ratio_fluency_memory_full)) +
+    geom_violin(fill = "grey90") +
+      geom_hline(yintercept = 0.999, linetype = "dashed", color = "red3", linewidth = 1) +
+  geom_jitter(aes(color=syndromes),alpha = 0.5, size = 2, position = position_jitter(width = 0.2, height = 0.0)) +
+    theme_classic()
+
+MCI_affective$ratio_1 <- ifelse(MCI_affective$ratio_fluency_memory_full <= 0.999, "Less memory impaired", "More memory impaired")
+table(MCI_affective$ratio_1, MCI_affective$syndromes)
+
+step1_mci <- subset(MCI_affective, ratio_1 == "Less memory impaired")
+
+tbl_summary(
+    step1_mci,
+    include = c(Age, Years_of_school, RUDAS, RPT_learning, RPT_recall, RPT_recognition_total, CRT, any_fluency,
+                ratio_memory,ratio_fluency_memory_full),
+    by = syndromes, 
+    type = list(RPT_learning ~ "continuous"),
+    statistic = list(all_continuous() ~ "{median} [{p25}, {p75}]"), 
+    digits = list(all_continuous() ~ 1),
+    missing = "no" # don't list missing data separately
+  ) |> 
+  add_p() |> # test for a difference between groups
+  modify_header(label = "")
+
+
+
+set.seed(97)
+plot1 <- ggplot(AD_nonAD, aes(syndromes, RPT_recall)) +
+    geom_boxplot(width = 0.3, outlier.shape = NA)+
+      geom_hline(yintercept = 1.5, linetype = "dashed", color = "black", linewidth = 1) +
+  geom_jitter(aes(color=syndromes),alpha = 0.5, position = position_jitter(width = 0.2, height = 0.2)) +
+    scale_color_manual(values = c("#56B4E9", "#E69F00"), labels = c("AD", "Non_AD"))+
+    labs(title = "", color = NULL, y = "RPT delayed recall") +
+      scale_x_discrete(labels = c("AD" = "AD", "Non_AD" = "Other dementia\ndisorders")) +
+    theme_classic()+
+    scale_y_continuous(breaks = 0:10)+
+
+    theme(legend.position = "blank",axis.title.x = element_blank(),
+        axis.text.y = element_text(family = "serif", size = 12, color = "black"),
+        axis.text.x = element_text(family = "serif", size = 10, color = "black"),
+        legend.text = element_text(family = "serif", size = 10, color = "black"),
+        text = element_text(family = "serif"))
+plot2 <- ggplot(MCI_affective, aes(syndromes, ratio_fluency_memory_full)) +
+    geom_boxplot(width = 0.3, outlier.shape = NA)+
+      geom_hline(yintercept = 1.0, linetype = "dashed", color = "black", linewidth = 1) +
+  geom_jitter(aes(color=syndromes),alpha = 0.5, position = position_jitter(width = 0.2, height = 0.0)) +
+    scale_color_manual(values = c("#56B4E9", "#E69F00"), labels = c("Affectives", "Mild_impairment"))+
+    scale_x_discrete(labels = c("Affectives" = "Affective\ndisorder", "Mild_impairment" = "MCI")) +
+    labs(title = "", color = NULL, y = "Ratio (Fluency/Memory)") +
+    theme_classic()+
+    theme(legend.position = "blank",axis.title.x = element_blank(),
+        axis.text.y = element_text(family = "serif", size = 12, color = "black"),
+        axis.text.x = element_text(family = "serif", size = 10, color = "black"),
+        legend.text = element_text(family = "serif", size = 10, color = "black"),
+        text = element_text(family = "serif"))
+
+plot_grid(plot1, plot2, labels = c("A", "B"))
 ```
-
-
